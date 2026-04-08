@@ -3,12 +3,25 @@
   "version": "1.0.0",
   "description": "Cross-editor notification gateway for approval waiting events.",
   "main": "dist/main.js",
+  "files": [
+    "dist/**",
+    "web/**",
+    "scripts/cursor-hook-forwarder.mjs",
+    ".env.example",
+    ".cursor/hooks.json",
+    "README.md"
+  ],
+  "bin": {
+    "agentwake": "dist/cli.js"
+  },
   "scripts": {
     "dev": "tsx src/main.ts",
+    "cli": "tsx src/cli.ts",
     "build": "tsc -p tsconfig.json",
-    "start": "node dist/main.js",
+    "start": "node dist/cli.js start",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "init": "tsx src/cli.ts init"
   },
   "repository": {
     "type": "git",

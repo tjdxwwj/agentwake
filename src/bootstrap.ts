@@ -14,7 +14,6 @@ import { EventRouter } from "./gateway/event-router";
 import { DesktopNotifier } from "./notifiers/desktop-notifier";
 import { MobileWsNotifier } from "./notifiers/mobile-ws-notifier";
 import type { Notifier } from "./notifiers/notifier";
-import { PwaPushNotifier } from "./notifiers/pwa-push-notifier";
 
 export type BootstrappedGateway = {
   app: Express;
@@ -48,9 +47,7 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
 
   const mobileWsNotifier = new MobileWsNotifier();
   const desktopNotifier = new DesktopNotifier();
-  const pwaPushNotifier = new PwaPushNotifier(config.vapidPublicKey);
-  pwaPushNotifier.mountRoutes(app);
-  const defaultNotifiers = [desktopNotifier, mobileWsNotifier, pwaPushNotifier];
+  const defaultNotifiers = [desktopNotifier, mobileWsNotifier];
   const router = new EventRouter(overrides?.notifiers ?? defaultNotifiers, {
     dedupeWindowMs: config.dedupeWindowMs,
     rateLimitWindowMs: config.rateLimitWindowMs,
@@ -75,7 +72,6 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
       wsPath: config.wsPath,
       cursorHookPath: config.cursorHookPath,
       claudeHookPath: config.claudeHookPath,
-      pushAuthRequired: true,
     });
   });
 

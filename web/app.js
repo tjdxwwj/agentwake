@@ -1,10 +1,7 @@
-const APP_VERSION = "debug9";
+const APP_VERSION = "debug11";
 const statusEl = document.getElementById("status");
 const eventsEl = document.getElementById("events");
 const notificationBtn = document.getElementById("btn-notification");
-const testNotificationBtn = document.getElementById("btn-test-notification");
-const pwaBtn = document.getElementById("btn-pwa");
-const installBtn = document.getElementById("btn-install");
 const installCheckBtn = document.getElementById("btn-install-check");
 const debugLogEl = document.getElementById("debug-log");
 
@@ -15,7 +12,6 @@ let lastTimestamp = 0;
 const seenEventKeys = new Set();
 const debugLines = [];
 let swRegistration = null;
-let deferredInstallPrompt = null;
 let swRegisterError = null;
 
 function debugLog(message, meta) {
@@ -223,17 +219,6 @@ async function onRequestPermissionClick() {
   setStatus(`通知权限：${result}`);
 }
 
-function urlBase64ToUint8Array(base64String) {
-  const padding = "=".repeat((4 - (base64String.length % 4)) % 4);
-  const base64 = (base64String + padding).replace(/-/g, "+").replace(/_/g, "/");
-  const rawData = atob(base64);
-  const outputArray = new Uint8Array(rawData.length);
-  for (let i = 0; i < rawData.length; i += 1) {
-    outputArray[i] = rawData.charCodeAt(i);
-  }
-  return outputArray;
-}
-
 async function setupServiceWorker() {
   if (!("serviceWorker" in navigator)) {
     debugLog("sw not supported");
@@ -263,7 +248,6 @@ async function onInstallCheckClick() {
     swRegistered: Boolean(swRegistration),
     swRegisterError,
     hasManifest: manifestOk,
-    canPromptInstall: Boolean(deferredInstallPrompt),
     isAndroid,
   };
   debugLog("installability check", checklist);
@@ -284,72 +268,11 @@ async function onInstallCheckClick() {
     setStatus("安装失败主因：Service Worker 注册失败，请查看调试日志");
     return;
   }
-  if (!deferredInstallPrompt && isAndroid) {
+  if (isAndroid) {
     setStatus("可手动安装：Chrome 菜单 ⋮ -> 安装应用/添加到主屏幕");
     return;
   }
   setStatus("安装条件基本满足，可继续安装");
-}
-
-async function onEnablePwaPushClick() {
-  const registration = swRegistration ?? (await setupServiceWorker());
-  if (!registration) {
-    setStatus("Service Worker 注册失败，无法启用 PWA Push");
-    return;
-  }
-  const keyResp = await fetch("/api/push/public-key");
-  debugLog("pwa public-key response", { status: keyResp.status });
-  if (!keyResp.ok) {
-    setStatus("服务端未配置 VAPID，无法启用 Push");
-    return;
-  }
-  const keyData = await keyResp.json();
-  const subscription = await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: urlBase64ToUint8Array(keyData.publicKey),
-  });
-  await fetch("/api/push/subscribe", {
-    method: "POST",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ subscription }),
-  });
-  debugLog("pwa subscribe success");
-  setStatus("PWA Push 订阅成功");
-}
-
-async function onInstallClick() {
-  if (!deferredInstallPrompt) {
-    const ua = navigator.userAgent || "";
-    const isAndroid = /Android/i.test(ua);
-    if (isAndroid) {
-      setStatus("Android 请点浏览器菜单 ⋮ -> 安装应用/添加到主屏幕");
-    } else {
-      setStatus("iOS 请在 Safari 分享菜单中“添加到主屏幕”");
-    }
-    return;
-  }
-  deferredInstallPrompt.prompt();
-  const choice = await deferredInstallPrompt.userChoice;
-  debugLog("install prompt choice", { outcome: choice?.outcome });
-  deferredInstallPrompt = null;
-}
-
-function onTestNotificationClick() {
-  const testEvent = {
-    source: "manual-test",
-    title: "AgentWake 测试通知",
-    body: `测试时间：${new Date().toLocaleTimeString()}`,
-    timestamp: Date.now(),
-    dedupeKey: `manual-test:${Date.now()}`,
-  };
-  debugLog("manual notification test", { permission: Notification.permission });
-  appendEvent(testEvent);
-  void showSystemNotification(testEvent);
-  if (Notification.permission !== "granted") {
-    setStatus(`通知权限不是 granted（当前：${Notification.permission}）`);
-    return;
-  }
-  setStatus("已触发系统通知测试");
 }
 
 if (notificationBtn) {
@@ -359,33 +282,6 @@ if (notificationBtn) {
   });
 } else {
   debugLog("btn missing", { id: "btn-notification" });
-}
-
-if (testNotificationBtn) {
-  testNotificationBtn.addEventListener("click", () => {
-    hapticFeedback();
-    onTestNotificationClick();
-  });
-} else {
-  debugLog("btn missing", { id: "btn-test-notification" });
-}
-
-if (pwaBtn) {
-  pwaBtn.addEventListener("click", () => {
-    hapticFeedback();
-    void onEnablePwaPushClick();
-  });
-} else {
-  debugLog("btn missing", { id: "btn-pwa" });
-}
-
-if (installBtn) {
-  installBtn.addEventListener("click", () => {
-    hapticFeedback();
-    void onInstallClick();
-  });
-} else {
-  debugLog("btn missing", { id: "btn-install" });
 }
 
 if (installCheckBtn) {
@@ -407,21 +303,9 @@ document.addEventListener("click", (event) => {
     hapticFeedback();
   }
 
-  if (target.id === "btn-test-notification") {
-    debugLog("delegated click", { id: target.id });
-    onTestNotificationClick();
-  }
   if (target.id === "btn-notification") {
     debugLog("delegated click", { id: target.id });
     void onRequestPermissionClick();
-  }
-  if (target.id === "btn-pwa") {
-    debugLog("delegated click", { id: target.id });
-    void onEnablePwaPushClick();
-  }
-  if (target.id === "btn-install") {
-    debugLog("delegated click", { id: target.id });
-    void onInstallClick();
   }
   if (target.id === "btn-install-check") {
     debugLog("delegated click", { id: target.id });
@@ -458,13 +342,6 @@ window.addEventListener("error", (event) => {
 
 window.addEventListener("unhandledrejection", (event) => {
   debugLog("unhandled rejection", { reason: String(event.reason) });
-});
-
-window.addEventListener("beforeinstallprompt", (event) => {
-  event.preventDefault();
-  deferredInstallPrompt = event;
-  debugLog("beforeinstallprompt captured");
-  setStatus("可安装应用：点击“安装应用”");
 });
 
 void init().catch((error) => {

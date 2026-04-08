@@ -97,16 +97,13 @@
   </head>
   <body>
     <h2>AgentWake 移动通知</h2>
-    <div class="card">
-      <div class="button-group">
-        <button id="btn-notification">授权系统通知</button>
-        <button id="btn-test-notification">测试系统通知</button>
-        <button id="btn-pwa">启用 PWA Push</button>
-        <button id="btn-install">安装应用</button>
-        <button id="btn-install-check">检查安装条件</button>
+      <div class="card">
+        <div class="button-group">
+          <button id="btn-notification">授权系统通知</button>
+          <button id="btn-install-check">检查安装条件</button>
+        </div>
+        <div id="status" class="meta">初始化中...</div>
       </div>
-      <div id="status" class="meta">初始化中...</div>
-    </div>
     <div class="card">
       <h3>实时事件</h3>
       <div id="events"></div>
@@ -115,6 +112,6 @@
       <h3>调试日志</h3>
       <div id="debug-log"></div>
     </div>
-    <script src="/app.js?v=debug9"></script>
+    <script src="/app.js?v=debug11"></script>
   </body>
   </html>
