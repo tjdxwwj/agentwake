@@ -1,17 +1,20 @@
 #!/usr/bin/env node
 import { execSync } from "node:child_process";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
-import os from "node:os";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { ensureHome, homePath, PKG_ROOT } from "./paths";
 import { runGateway } from "./run-gateway";
 
 function printHelp(): void {
   console.log(`agentwake CLI
 
 Usage:
-  agentwake init
-  agentwake start [--host <host>] [--port <port>]
-  agentwake help
+  agentwake setup                       交互式配置向导
+  agentwake init                        非交互式初始化（HTTPS + mkcert）
+  agentwake start [--host <host>] [--port <port>]  启动服务
+  agentwake help                        帮助信息
+
+数据目录: ~/.agentwake/
 `);
 }
 
@@ -32,25 +35,33 @@ function parseStartFlags(args: string[]): void {
 }
 
 function ensureEnvFile(): void {
-  const envPath = path.join(process.cwd(), ".env");
-  const envExamplePath = path.join(process.cwd(), ".env.example");
-  if (!existsSync(envPath) && existsSync(envExamplePath)) {
-    copyFileSync(envExamplePath, envPath);
+  const envPath = homePath(".env");
+  if (existsSync(envPath)) return;
+  ensureHome();
+  const candidates = [
+    path.join(PKG_ROOT, ".env.example"),
+  ];
+  for (const src of candidates) {
+    if (existsSync(src)) {
+      copyFileSync(src, envPath);
+      return;
+    }
   }
 }
 
 function ensureHttpsEnv(): void {
-  const envPath = path.join(process.cwd(), ".env");
+  const envPath = homePath(".env");
   if (!existsSync(envPath)) {
-    throw new Error(".env not found in current directory");
+    throw new Error(".env not found. Run `agentwake init` first.");
   }
 
+  const certDir = homePath("certs");
   const raw = readFileSync(envPath, "utf8");
   let next = raw;
   const upserts: Array<[RegExp, string]> = [
     [/^AGENTWAKE_HTTPS_ENABLED=.*$/m, "AGENTWAKE_HTTPS_ENABLED=1"],
-    [/^AGENTWAKE_HTTPS_CERT_PATH=.*$/m, "AGENTWAKE_HTTPS_CERT_PATH=certs/dev-cert.pem"],
-    [/^AGENTWAKE_HTTPS_KEY_PATH=.*$/m, "AGENTWAKE_HTTPS_KEY_PATH=certs/dev-key.pem"],
+    [/^AGENTWAKE_HTTPS_CERT_PATH=.*$/m, `AGENTWAKE_HTTPS_CERT_PATH=${certDir}/dev-cert.pem`],
+    [/^AGENTWAKE_HTTPS_KEY_PATH=.*$/m, `AGENTWAKE_HTTPS_KEY_PATH=${certDir}/dev-key.pem`],
   ];
   for (const [pattern, replacement] of upserts) {
     if (pattern.test(next)) {
@@ -63,6 +74,7 @@ function ensureHttpsEnv(): void {
 }
 
 function ensureHooksHttps(): void {
+  // Cursor hooks live in the project cwd, not in ~/.agentwake
   const hooksPath = path.join(process.cwd(), ".cursor", "hooks.json");
   if (!existsSync(hooksPath)) {
     return;
@@ -90,7 +102,7 @@ function ensureHooksHttps(): void {
 }
 
 function ensureNodeExtraCaEnvHint(): void {
-  const envPath = path.join(process.cwd(), ".env");
+  const envPath = homePath(".env");
   if (!existsSync(envPath)) {
     return;
   }
@@ -112,6 +124,7 @@ function ensureNodeExtraCaEnvHint(): void {
 }
 
 function resolveLanIpv4(): string | null {
+  const os = require("node:os") as typeof import("node:os");
   const interfaces = os.networkInterfaces();
   for (const entries of Object.values(interfaces)) {
     if (!entries) {
@@ -131,9 +144,9 @@ function run(command: string): void {
 }
 
 function setupMkcert(): void {
-  const certDir = path.join(process.cwd(), "certs");
+  const certDir = homePath("certs");
   if (!existsSync(certDir)) {
-    execSync(`mkdir -p "${certDir}"`);
+    mkdirSync(certDir, { recursive: true });
   }
   try {
     run("mkcert -help > /dev/null");
@@ -152,7 +165,9 @@ function setupMkcert(): void {
   if (lanIp) {
     san.push(lanIp);
   }
-  run(`mkcert -cert-file certs/dev-cert.pem -key-file certs/dev-key.pem ${san.join(" ")}`);
+  const certPath = `${certDir}/dev-cert.pem`;
+  const keyPath = `${certDir}/dev-key.pem`;
+  run(`mkcert -cert-file "${certPath}" -key-file "${keyPath}" ${san.join(" ")}`);
 
   try {
     const caRoot = execSync("mkcert -CAROOT", { encoding: "utf8" }).trim();
@@ -164,12 +179,22 @@ function setupMkcert(): void {
 }
 
 function initProject(): void {
+  ensureHome();
   ensureEnvFile();
   ensureHttpsEnv();
   ensureHooksHttps();
   setupMkcert();
   ensureNodeExtraCaEnvHint();
-  console.log("[agentwake] init completed with HTTPS defaults.");
+  console.log(`[agentwake] init completed. Data dir: ${homePath()}`);
+}
+
+/** Load .env from ~/.agentwake/.env into process.env. */
+async function loadHomeEnv(): Promise<void> {
+  const envPath = homePath(".env");
+  if (existsSync(envPath)) {
+    const dotenv = await import("dotenv");
+    dotenv.config({ path: envPath });
+  }
 }
 
 async function main(): Promise<void> {
@@ -182,9 +207,14 @@ async function main(): Promise<void> {
     initProject();
     return;
   }
+  if (cmd === "setup") {
+    const { runSetup } = await import("./setup");
+    await runSetup();
+    return;
+  }
   if (cmd === "start") {
     parseStartFlags(rest);
-    process.env.AGENTWAKE_HTTPS_ENABLED = "1";
+    await loadHomeEnv();
     await runGateway();
     return;
   }

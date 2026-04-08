@@ -1,5 +1,15 @@
-import "dotenv/config";
+import { existsSync } from "node:fs";
 import os from "node:os";
+import dotenv from "dotenv";
+import { homePath } from "./paths";
+
+// Load .env from ~/.agentwake/.env (or cwd/.env as fallback for local dev)
+const homeEnv = homePath(".env");
+if (existsSync(homeEnv)) {
+  dotenv.config({ path: homeEnv });
+} else {
+  dotenv.config();
+}
 import qrcode from "qrcode-terminal";
 import { createGateway } from "./bootstrap";
 import { loadConfig } from "./config";

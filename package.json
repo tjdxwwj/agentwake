@@ -21,7 +21,8 @@
     "start": "node dist/cli.js start",
     "test": "vitest run",
     "test:watch": "vitest",
-    "init": "tsx src/cli.ts init"
+    "init": "tsx src/cli.ts init",
+    "setup": "tsx src/cli.ts setup"
   },
   "repository": {
     "type": "git",
@@ -36,6 +37,7 @@
   },
   "homepage": "https://github.com/tjdxwwj/agentwake#readme",
   "dependencies": {
+    "@inquirer/prompts": "^8.4.1",
     "@types/qrcode-terminal": "^0.12.2",
     "dotenv": "^17.4.1",
     "express": "^5.2.1",

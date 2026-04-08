@@ -12,7 +12,10 @@ import type { GatewayAdapter } from "./gateway/adapter";
 import { AdapterRegistry } from "./gateway/adapter-registry";
 import { EventRouter } from "./gateway/event-router";
 import { DesktopNotifier } from "./notifiers/desktop-notifier";
+import { DingTalkNotifier } from "./notifiers/dingtalk-notifier";
+import { FeishuNotifier } from "./notifiers/feishu-notifier";
 import { MobileWsNotifier } from "./notifiers/mobile-ws-notifier";
+import { WeComNotifier } from "./notifiers/wecom-notifier";
 import type { Notifier } from "./notifiers/notifier";
 
 export type BootstrappedGateway = {
@@ -35,8 +38,8 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
     config.httpsEnabled === true
       ? createHttpsServer(
           {
-            cert: readFileSync(path.resolve(process.cwd(), config.httpsCertPath)),
-            key: readFileSync(path.resolve(process.cwd(), config.httpsKeyPath)),
+            cert: readFileSync(path.resolve(config.httpsCertPath)),
+            key: readFileSync(path.resolve(config.httpsKeyPath)),
           },
           app,
         )
@@ -47,7 +50,26 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
 
   const mobileWsNotifier = new MobileWsNotifier();
   const desktopNotifier = new DesktopNotifier();
-  const defaultNotifiers = [desktopNotifier, mobileWsNotifier];
+  const defaultNotifiers: Notifier[] = [];
+  if (config.desktopEnabled) {
+    defaultNotifiers.push(desktopNotifier);
+  }
+  if (config.pwaEnabled) {
+    defaultNotifiers.push(mobileWsNotifier);
+  }
+  if (config.dingtalkEnabled && config.dingtalkWebhook) {
+    defaultNotifiers.push(
+      new DingTalkNotifier({ webhook: config.dingtalkWebhook, secret: config.dingtalkSecret }),
+    );
+  }
+  if (config.feishuEnabled && config.feishuWebhook) {
+    defaultNotifiers.push(
+      new FeishuNotifier({ webhook: config.feishuWebhook, secret: config.feishuSecret }),
+    );
+  }
+  if (config.wecomEnabled && config.wecomWebhook) {
+    defaultNotifiers.push(new WeComNotifier({ webhook: config.wecomWebhook }));
+  }
   const router = new EventRouter(overrides?.notifiers ?? defaultNotifiers, {
     dedupeWindowMs: config.dedupeWindowMs,
     rateLimitWindowMs: config.rateLimitWindowMs,
@@ -88,7 +110,7 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
     res.json({ ok: true, events, now: Date.now() });
   });
 
-  const staticDir = path.resolve(process.cwd(), config.webRootPath);
+  const staticDir = path.resolve(config.webRootPath);
   app.use(
     "/",
     express.static(staticDir, {
@@ -111,7 +133,9 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
       if (started) {
         return;
       }
-      mobileWsNotifier.attach(server, config.wsPath);
+      if (config.pwaEnabled) {
+        mobileWsNotifier.attach(server, config.wsPath);
+      }
       await registry.startAll({
         app,
         config,
