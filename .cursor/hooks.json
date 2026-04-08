@@ -1,0 +1,15 @@
+{
+  "version": 1,
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "sh -lc 'CAROOT=\"$(mkcert -CAROOT 2>/dev/null)\"; EXTRA_CA=\"${NODE_EXTRA_CA_CERTS:-$CAROOT/rootCA.pem}\"; AGENTWAKE_GATEWAY_URL=\"${AGENTWAKE_GATEWAY_URL:-https://127.0.0.1:3199/hooks/cursor}\" NODE_EXTRA_CA_CERTS=\"$EXTRA_CA\" AGENTWAKE_CURSOR_APPROVAL_MODE=\"${AGENTWAKE_CURSOR_APPROVAL_MODE:-cursor-ask}\" AGENTWAKE_CURSOR_ENFORCE_ASK=\"${AGENTWAKE_CURSOR_ENFORCE_ASK:-0}\" node \"./scripts/cursor-hook-forwarder.mjs\"'"
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "sh -lc 'CAROOT=\"$(mkcert -CAROOT 2>/dev/null)\"; EXTRA_CA=\"${NODE_EXTRA_CA_CERTS:-$CAROOT/rootCA.pem}\"; AGENTWAKE_GATEWAY_URL=\"${AGENTWAKE_GATEWAY_URL:-https://127.0.0.1:3199/hooks/cursor}\" NODE_EXTRA_CA_CERTS=\"$EXTRA_CA\" AGENTWAKE_CURSOR_APPROVAL_MODE=\"${AGENTWAKE_CURSOR_APPROVAL_MODE:-cursor-ask}\" AGENTWAKE_CURSOR_ENFORCE_ASK=\"${AGENTWAKE_CURSOR_ENFORCE_ASK:-0}\" node \"./scripts/cursor-hook-forwarder.mjs\"'"
+      }
+    ]
+  }
+}

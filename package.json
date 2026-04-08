@@ -1,0 +1,47 @@
+{
+  "name": "agentwake",
+  "version": "1.0.0",
+  "description": "Cross-editor notification gateway for approval waiting events.",
+  "main": "dist/main.js",
+  "scripts": {
+    "dev": "tsx src/main.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/main.js",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/tjdxwwj/agentwake.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "MIT",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/tjdxwwj/agentwake/issues"
+  },
+  "homepage": "https://github.com/tjdxwwj/agentwake#readme",
+  "dependencies": {
+    "@types/qrcode-terminal": "^0.12.2",
+    "dotenv": "^17.4.1",
+    "express": "^5.2.1",
+    "node-notifier": "^10.0.1",
+    "qrcode-terminal": "^0.12.0",
+    "web-push": "^3.6.7",
+    "ws": "^8.20.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^25.5.2",
+    "@types/node-notifier": "^8.0.5",
+    "@types/supertest": "^7.2.0",
+    "@types/web-push": "^3.6.4",
+    "@types/ws": "^8.18.1",
+    "supertest": "^7.2.2",
+    "tsx": "^4.21.0",
+    "typescript": "^6.0.2",
+    "vitest": "^4.1.3"
+  }
+}

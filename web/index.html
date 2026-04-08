@@ -1,0 +1,120 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#101827" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+    <link rel="apple-touch-icon" href="/icons/icon-192.svg" />
+    <link rel="manifest" href="/manifest.webmanifest" />
+    <title>AgentWake Mobile</title>
+    <style>
+      :root {
+        --safe-top: env(safe-area-inset-top, 0px);
+        --safe-bottom: env(safe-area-inset-bottom, 0px);
+      }
+      body { 
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; 
+        margin: 0; 
+        padding: calc(16px + var(--safe-top)) 16px calc(16px + var(--safe-bottom)) 16px; 
+        background: #101827; 
+        color: #e5e7eb; 
+        -webkit-tap-highlight-color: transparent;
+        overscroll-behavior-y: none;
+      }
+      .card { 
+        background: #1f2937; 
+        border-radius: 12px; 
+        padding: 16px; 
+        margin-bottom: 16px; 
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+      .button-group {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-bottom: 12px;
+      }
+      button { 
+        background: #2563eb; 
+        color: white; 
+        border: 0; 
+        border-radius: 8px; 
+        padding: 12px 16px; 
+        font-size: 15px;
+        font-weight: 500;
+        cursor: pointer;
+        user-select: none;
+        flex: 1 1 auto;
+        min-height: 44px; /* iOS 推荐最小点击高度 */
+        transition: background 0.2s, transform 0.1s;
+      }
+      button:active {
+        background: #1d4ed8;
+        transform: scale(0.98);
+      }
+      #events { 
+        max-height: 50vh; 
+        overflow-y: auto; 
+        -webkit-overflow-scrolling: touch;
+        margin-top: 8px;
+      }
+      .event { 
+        border-bottom: 1px solid #374151; 
+        padding: 12px 0; 
+      }
+      .event:last-child {
+        border-bottom: none;
+      }
+      .meta { 
+        color: #9ca3af; 
+        font-size: 12px; 
+        margin-top: 4px;
+      }
+      #status {
+        font-size: 13px;
+        text-align: center;
+        margin-top: 12px;
+        padding: 8px;
+        background: #374151;
+        border-radius: 6px;
+      }
+      h2, h3 { margin-top: 0; margin-bottom: 12px; }
+      #debug-log { 
+        max-height: 20vh; 
+        overflow-y: auto; 
+        white-space: pre-wrap; 
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace; 
+        font-size: 11px; 
+        color: #93c5fd; 
+        background: #111827;
+        padding: 8px;
+        border-radius: 6px;
+        -webkit-overflow-scrolling: touch;
+      }
+    </style>
+  </head>
+  <body>
+    <h2>AgentWake 移动通知</h2>
+    <div class="card">
+      <div class="button-group">
+        <button id="btn-notification">授权系统通知</button>
+        <button id="btn-test-notification">测试系统通知</button>
+        <button id="btn-pwa">启用 PWA Push</button>
+        <button id="btn-install">安装应用</button>
+        <button id="btn-install-check">检查安装条件</button>
+      </div>
+      <div id="status" class="meta">初始化中...</div>
+    </div>
+    <div class="card">
+      <h3>实时事件</h3>
+      <div id="events"></div>
+    </div>
+    <div class="card">
+      <h3>调试日志</h3>
+      <div id="debug-log"></div>
+    </div>
+    <script src="/app.js?v=debug9"></script>
+  </body>
+  </html>
