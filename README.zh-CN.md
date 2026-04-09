@@ -266,4 +266,11 @@ AGENTWAKE_PORT=4000 agentwake start
 
 ---
 
+## 贡献者
+
+- [@tjdxwwj](https://github.com/tjdxwwj)
+- [@qiangguanglin](https://github.com/qiangguanglin)
+
+---
+
 MIT License

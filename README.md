@@ -266,4 +266,11 @@ WeChat does not support Webhook message push API. You can use WeCom group bots a
 
 ---
 
+## Contributors
+
+- [@tjdxwwj](https://github.com/tjdxwwj)
+- [@qiangguanglin](https://github.com/qiangguanglin)
+
+---
+
 MIT License
