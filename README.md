@@ -101,12 +101,31 @@ After starting, the service runs at `https://localhost:3199`.
 
 ### DingTalk Configuration
 
-In DingTalk Group -> Group Settings -> Smart Group Assistant -> Add Bot -> Custom Webhook, copy the Webhook URL.
+1. Open the DingTalk group → **Group settings** → **Bot** (机器人) → add or manage bots.
+2. Choose **Custom** (自定义) — “Access custom services via Webhook”, then complete the wizard and copy the **Webhook URL** and optional **signing secret** (加签).
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-setup-group-bot.png" width="380" alt="DingTalk group settings: open Bot" />
+</p>
+
+<p align="center"><em>Group settings → Bot (机器人).</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-setup-custom-webhook.png" width="380" alt="DingTalk add robot: Custom Webhook" />
+</p>
+
+<p align="center"><em>Add robot → Custom — Webhook integration.</em></p>
 
 ```env
 AGENTWAKE_DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=xxx
 AGENTWAKE_DINGTALK_SECRET=SECxxx   # Optional, signature secret
 ```
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-notify.png" width="420" alt="DingTalk mobile: Claude Code attention and Cursor terminal approval" />
+</p>
+
+<p align="center"><em>Example messages: Claude Code “needs your attention” and Cursor “waiting for user approval” (group bot on mobile).</em></p>
 
 ### Feishu Configuration
 

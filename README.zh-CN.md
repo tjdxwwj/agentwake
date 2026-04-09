@@ -101,12 +101,31 @@ npm run dev
 
 ### 钉钉配置
 
-在钉钉群 -> 群设置 -> 智能群助手 -> 添加机器人 -> 自定义 Webhook，复制 Webhook 地址。
+1. 进入钉钉群 → **群设置** → **机器人** → 添加或管理机器人。  
+2. 在机器人列表中选择 **自定义**（通过 Webhook 接入自定义服务），按向导完成创建，复制 **Webhook 地址**；若启用加签，一并复制 **SEC…** 密钥。
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-setup-group-bot.png" width="380" alt="钉钉群设置：进入机器人" />
+</p>
+
+<p align="center"><em>群设置 → 机器人。</em></p>
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-setup-custom-webhook.png" width="380" alt="钉钉添加机器人：自定义 Webhook" />
+</p>
+
+<p align="center"><em>添加机器人 → 自定义（Webhook）。</em></p>
 
 ```env
 AGENTWAKE_DINGTALK_WEBHOOK=https://oapi.dingtalk.com/robot/send?access_token=xxx
 AGENTWAKE_DINGTALK_SECRET=SECxxx   # 可选，签名密钥
 ```
+
+<p align="center">
+  <img src="docs/screenshots/dingtalk-notify.png" width="420" alt="钉钉手机端：Claude Code 与 Cursor 终端授权通知示例" />
+</p>
+
+<p align="center"><em>消息示例（手机端群机器人）：上为 Claude Code 需要你的注意，下为 Cursor 终端等待用户同意。</em></p>
 
 ### 飞书配置
 
