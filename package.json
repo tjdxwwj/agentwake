@@ -1,6 +1,6 @@
 {
   "name": "agentwake",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Cross-editor notification gateway for approval waiting events.",
   "main": "dist/main.js",
   "files": [

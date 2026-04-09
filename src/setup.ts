@@ -159,7 +159,7 @@ export async function runSetup(): Promise<void> {
   if (channels.includes("dingtalk")) {
     const webhook = await input({
       message: "输入钉钉 Webhook URL：",
-      validate: (v) => v.startsWith("https://") || "请输入有效的 HTTPS URL",
+      validate: (v: string) => v.startsWith("https://") || "请输入有效的 HTTPS URL",
     });
     const secret = await password({
       message: "输入钉钉安全密钥（可选，直接回车跳过）：",
@@ -171,7 +171,7 @@ export async function runSetup(): Promise<void> {
   if (channels.includes("feishu")) {
     const webhook = await input({
       message: "输入飞书 Webhook URL：",
-      validate: (v) => v.startsWith("https://") || "请输入有效的 HTTPS URL",
+      validate: (v: string) => v.startsWith("https://") || "请输入有效的 HTTPS URL",
     });
     const secret = await password({
       message: "输入飞书签名校验密钥（可选，直接回车跳过）：",
@@ -183,7 +183,7 @@ export async function runSetup(): Promise<void> {
   if (channels.includes("wecom")) {
     const webhook = await input({
       message: "输入企业微信群机器人 Webhook URL：",
-      validate: (v) =>
+      validate: (v: string) =>
         v.startsWith("https://qyapi.weixin.qq.com/") || "请输入有效的企业微信 Webhook URL",
     });
     envVars.AGENTWAKE_WECOM_WEBHOOK = webhook;

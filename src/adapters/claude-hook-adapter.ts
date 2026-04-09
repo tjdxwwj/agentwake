@@ -24,6 +24,8 @@ const HOOK_LEVEL_MAP: Record<string, NotifyLevel> = {
   SessionStart: "info",
 };
 
+const IGNORED_HOOKS = new Set(["PreToolUse", "PostToolUse"]);
+
 /** Default titles when no custom title is configured. */
 const DEFAULT_TITLES: Record<string, string> = {
   Stop: "Claude Code: 任务完成",
@@ -32,6 +34,17 @@ const DEFAULT_TITLES: Record<string, string> = {
   SessionEnd: "Claude Code: 会话已结束",
   SessionStart: "Claude Code: 会话已开始",
 };
+
+function buildClaudeDedupeKey(payload: z.infer<typeof claudeNativeSchema>): string {
+  const messageToken = payload.last_assistant_message?.slice(0, 120) ?? "";
+  return [
+    "claude",
+    payload.hook_event_name,
+    payload.session_id ?? "unknown-session",
+    payload.transcript_path ?? "",
+    messageToken,
+  ].join(":");
+}
 
 export function createClaudeHookAdapter(): GatewayAdapter {
   return {
@@ -50,6 +63,10 @@ export function createClaudeHookAdapter(): GatewayAdapter {
         if (nativeParsed.success && nativeParsed.data.hook_event_name) {
           const data = nativeParsed.data;
           const hookName = data.hook_event_name;
+          if (IGNORED_HOOKS.has(hookName)) {
+            res.status(202).json({ ok: true, accepted: false, reason: "ignored-event" });
+            return;
+          }
           const level = HOOK_LEVEL_MAP[hookName] ?? "info";
           const title = customTitles[hookName] || DEFAULT_TITLES[hookName] || `Claude Code: ${hookName}`;
 
@@ -59,7 +76,13 @@ export function createClaudeHookAdapter(): GatewayAdapter {
             level,
             title,
             body: data.last_assistant_message?.slice(0, 300) || "",
-            dedupeKey: `claude:${hookName}:${data.session_id || ""}:${Date.now()}`,
+            dedupeKey: buildClaudeDedupeKey(data),
+            meta: {
+              eventName: hookName,
+              sessionId: data.session_id,
+              transcriptPath: data.transcript_path,
+              cwd: data.cwd,
+            },
           });
           await context.emit(event);
           res.status(200).json({ ok: true, accepted: true });

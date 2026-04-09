@@ -2,6 +2,18 @@
 
 跨编辑器的 AI 编程通知网关。支持 Cursor / Claude Code / Qoder，当 AI 任务完成、异常终止或等待授权时，实时推送通知到桌面、手机和 IM 群。
 
+## 效果预览
+
+<p align="center">
+  <img src="docs/screenshots/web.jpg" width="48%" alt="Web 界面" />
+  <img src="docs/screenshots/mobile_notify.jpg" width="48%" alt="手机通知" />
+</p>
+
+<p align="center">
+  <img src="docs/screenshots/cursor.png" width="48%" alt="Cursor 通知" />
+  <img src="docs/screenshots/qoder.png" width="48%" alt="Qoder 通知" />
+</p>
+
 ---
 
 ## 核心特性

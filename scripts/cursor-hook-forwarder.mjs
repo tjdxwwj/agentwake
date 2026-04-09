@@ -30,6 +30,40 @@ const DANGEROUS_COMMAND_PATTERNS = [
   /\bcurl\b.*\|\s*(sh|bash|zsh)\b/i,
 ];
 
+function isEnabledAgentFlag(name) {
+  const raw = String(process.env[name] || "").trim().toLowerCase();
+  return raw !== "" && raw !== "0" && raw !== "false" && raw !== "no";
+}
+
+function resolveAgentMarkerFromEnv() {
+  const cursorAgent = isEnabledAgentFlag("CURSOR_AGRNT") || isEnabledAgentFlag("CURSOR_AGENT");
+  const qoderAgent = isEnabledAgentFlag("QODER_AGENT");
+  const agentMarker = cursorAgent ? "cursor" : qoderAgent ? "qoder" : undefined;
+  return { cursorAgent, qoderAgent, agentMarker };
+}
+
+async function resolveParentChildCount() {
+  try {
+    const { stdout } = await execFileAsync("ps", ["-axo", "ppid=,pid="]);
+    const lines = String(stdout || "").split("\n");
+    const parentPid = String(process.ppid);
+    let count = 0;
+    for (const line of lines) {
+      const trimmed = line.trim();
+      if (!trimmed) {
+        continue;
+      }
+      const [ppid, pid] = trimmed.split(/\s+/);
+      if (ppid === parentPid && pid && pid !== String(process.pid)) {
+        count += 1;
+      }
+    }
+    return count;
+  } catch {
+    return undefined;
+  }
+}
+
 function shouldAskForDangerousCommand(command) {
   const text = String(command || "").trim();
   if (!text) {
@@ -193,15 +227,27 @@ async function main() {
     if (eventName !== "beforeShellExecution" && eventName !== "afterShellExecution") {
       return;
     }
-    let forwardedPayload = payload;
+    const { cursorAgent, qoderAgent, agentMarker } = resolveAgentMarkerFromEnv();
+    const parentChildCount = await resolveParentChildCount();
+    const hasChildProcess = typeof parentChildCount === "number" ? parentChildCount > 0 : false;
+
+    let forwardedPayload = {
+      ...payload,
+      cursor_agent: cursorAgent,
+      qoder_agent: qoderAgent,
+      ...(agentMarker ? { agent_marker: agentMarker } : {}),
+      parent_pid: Number(process.ppid),
+      has_child_process: hasChildProcess,
+      parent_child_count: typeof parentChildCount === "number" ? parentChildCount : 0,
+    };
     if (eventName === "beforeShellExecution" && enforceDangerousAsk) {
-      const command = String(payload?.command || "");
+      const command = String(forwardedPayload?.command || "");
       if (shouldAskForDangerousCommand(command)) {
         const reasonText = `AgentWake risk policy matched: ${command}`;
         let reply;
         let approvalDecision = "ask";
         if (approvalMode === "osascript") {
-          const cacheKey = resolveApprovalCacheKey(payload);
+          const cacheKey = resolveApprovalCacheKey(forwardedPayload);
           const cachedDecision = readCachedDecision(cacheKey);
           approvalDecision = cachedDecision || (await resolveOsaDecision(command));
           if (!cachedDecision) {
@@ -232,7 +278,7 @@ async function main() {
         }
         process.stdout.write(`${JSON.stringify(reply)}\n`);
         forwardedPayload = {
-          ...payload,
+          ...forwardedPayload,
           permission: reply.permission,
           pendingApproval: approvalDecision === "ask",
           reason: reasonText,
