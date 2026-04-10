@@ -1,40 +1,41 @@
 import { describe, expect, it } from "vitest";
-import { parseQoderLogLine } from "../src/adapters/qoder-log-adapter";
+import { parseQoderLogLine, parseQoderRunConfigFromSettings } from "../src/adapters/qoder-log-adapter";
 
 describe("parseQoderLogLine", () => {
-  it("parses permission requested", () => {
+  it("ignores permission requested line", () => {
     const signal = parseQoderLogLine(
       '2026-04-08 10:01:02 [info] Tool permission requested toolCallId=toolu_abc toolName=Shell',
     );
-    expect(signal).not.toBeNull();
-    expect(signal?.type).toBe("permission_requested");
-    if (signal?.type === "permission_requested") {
-      expect(signal.toolCallId).toBe("toolu_abc");
-      expect(signal.toolName).toBe("Shell");
-    }
+    expect(signal).toBeNull();
   });
 
-  it("parses permission resolved", () => {
+  it("ignores permission resolved line", () => {
     const signal = parseQoderLogLine(
       '2026-04-08 10:01:07 [info] Permission resolved toolCallId=toolu_abc payload={"name":"Allow"}',
     );
-    expect(signal).not.toBeNull();
-    expect(signal?.type).toBe("permission_resolved");
-    if (signal?.type === "permission_resolved") {
-      expect(signal.outcome).toBe("allow");
-    }
+    expect(signal).toBeNull();
   });
 
-  it("parses suspended/resumed transitions", () => {
+  it("ignores suspended/resumed transitions", () => {
     const suspended = parseQoderLogLine("streaming -> suspended reason=permission_request");
     const resumed = parseQoderLogLine("suspended -> streaming");
-    expect(suspended?.type).toBe("agent_suspended");
-    expect(resumed?.type).toBe("agent_resumed");
+    expect(suspended).toBeNull();
+    expect(resumed).toBeNull();
   });
 
   it("parses session end transition", () => {
     const signal = parseQoderLogLine("2026-04-09 19:51:38.217 [info] suspended -> cancelled");
     expect(signal?.type).toBe("agent_session_end");
+  });
+
+  it("parses session start transition", () => {
+    const signal = parseQoderLogLine(
+      "2026-04-09 19:49:10.101 [info] [ChatViewManagerService] Created tab: tabId=foo, sessionId=411864aa-22f6-4f87-9641-01ac068997b4",
+    );
+    expect(signal?.type).toBe("agent_session_start");
+    if (signal?.type === "agent_session_start") {
+      expect(signal.sessionId).toBe("411864aa-22f6-4f87-9641-01ac068997b4");
+    }
   });
 
   it("parses session end from streaming completed transition", () => {
@@ -83,5 +84,29 @@ describe("parseQoderLogLine", () => {
   it("ignores unrelated lines", () => {
     const signal = parseQoderLogLine("build completed");
     expect(signal).toBeNull();
+  });
+});
+
+describe("parseQoderRunConfigFromSettings", () => {
+  it("parses terminal autoRun mode and command allowlist", () => {
+    const config = parseQoderRunConfigFromSettings(
+      JSON.stringify({
+        app: {
+          configChatTerminalRunMode: "autoRun",
+          configChatCommandAllowlist: "node,python3,npm run",
+          configChatCommandDenyList: "rm,sudo",
+        },
+      }),
+    );
+    expect(config.terminalRunMode).toBe("autoRun");
+    expect(config.commandAllowlist).toEqual(["node", "python3", "npm run"]);
+    expect(config.commandDenylist).toEqual(["rm", "sudo"]);
+  });
+
+  it("returns fallback on invalid settings json", () => {
+    const config = parseQoderRunConfigFromSettings("{invalid");
+    expect(config.terminalRunMode).toBe("unknown");
+    expect(config.commandAllowlist).toEqual([]);
+    expect(config.commandDenylist).toEqual([]);
   });
 });

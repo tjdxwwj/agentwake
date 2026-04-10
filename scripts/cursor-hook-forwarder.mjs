@@ -2,33 +2,15 @@
 import process from "node:process";
 import path from "node:path";
 import { mkdir, appendFile } from "node:fs/promises";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
-
-const execFileAsync = promisify(execFile);
 
 const gatewayUrl = process.env.AGENTWAKE_GATEWAY_URL || "http://127.0.0.1:3199/hooks/cursor";
-const enforceDangerousAsk = (process.env.AGENTWAKE_CURSOR_ENFORCE_ASK || "1") !== "0";
-const approvalMode = (process.env.AGENTWAKE_CURSOR_APPROVAL_MODE || "cursor-ask").trim().toLowerCase();
 const debugLogEnabled = (process.env.AGENTWAKE_CURSOR_DEBUG_LOG || "1") !== "0";
 const debugLogFile =
   process.env.AGENTWAKE_CURSOR_DEBUG_LOG_FILE ||
-  path.join(process.cwd(), ".qoder", "cursor-hook-debug.jsonl");
-const approvalCacheFile =
-  process.env.AGENTWAKE_CURSOR_APPROVAL_CACHE_FILE ||
-  path.join(process.cwd(), ".qoder", "cursor-approval-cache.json");
-const approvalCacheTtlMs = 30_000;
-
-const DANGEROUS_COMMAND_PATTERNS = [
-  /\brm\s+-rf\s+\/(?!tmp\b)/i,
-  /\brm\s+-rf\s+~\//i,
-  /\bsudo\b/i,
-  /\bchmod\s+-R\s+777\b/i,
-  /\bdd\s+if=/i,
-  /\bmkfs(\.\w+)?\b/i,
-  /\bcurl\b.*\|\s*(sh|bash|zsh)\b/i,
-];
+  path.join(process.cwd(), ".agentwake", "cursor-hook-debug.jsonl");
+const forwardTimeoutMs = Number.isFinite(Number(process.env.AGENTWAKE_CURSOR_FORWARD_TIMEOUT_MS))
+  ? Math.max(100, Number(process.env.AGENTWAKE_CURSOR_FORWARD_TIMEOUT_MS))
+  : 800;
 
 function isEnabledAgentFlag(name) {
   const raw = String(process.env[name] || "").trim().toLowerCase();
@@ -36,40 +18,10 @@ function isEnabledAgentFlag(name) {
 }
 
 function resolveAgentMarkerFromEnv() {
-  const cursorAgent = isEnabledAgentFlag("CURSOR_AGRNT") || isEnabledAgentFlag("CURSOR_AGENT");
+  const cursorAgent = isEnabledAgentFlag("CURSOR_AGENT");
   const qoderAgent = isEnabledAgentFlag("QODER_AGENT");
   const agentMarker = cursorAgent ? "cursor" : qoderAgent ? "qoder" : undefined;
   return { cursorAgent, qoderAgent, agentMarker };
-}
-
-async function resolveParentChildCount() {
-  try {
-    const { stdout } = await execFileAsync("ps", ["-axo", "ppid=,pid="]);
-    const lines = String(stdout || "").split("\n");
-    const parentPid = String(process.ppid);
-    let count = 0;
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed) {
-        continue;
-      }
-      const [ppid, pid] = trimmed.split(/\s+/);
-      if (ppid === parentPid && pid && pid !== String(process.pid)) {
-        count += 1;
-      }
-    }
-    return count;
-  } catch {
-    return undefined;
-  }
-}
-
-function shouldAskForDangerousCommand(command) {
-  const text = String(command || "").trim();
-  if (!text) {
-    return false;
-  }
-  return DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 async function writeDebugLog(record) {
@@ -89,101 +41,10 @@ async function readStdin() {
   return chunks.join("");
 }
 
-function resolveApprovalCacheKey(payload) {
-  const generation = String(payload?.generation_id || "");
-  const session = String(payload?.session_id || payload?.conversation_id || "");
-  const command = String(payload?.command || "");
-  if (!command) {
-    return "";
-  }
-  return `${session}:${generation}:${command}`;
-}
-
-function loadApprovalCache() {
-  try {
-    if (!existsSync(approvalCacheFile)) {
-      return {};
-    }
-    const raw = readFileSync(approvalCacheFile, "utf8");
-    const parsed = JSON.parse(raw);
-    if (!parsed || typeof parsed !== "object") {
-      return {};
-    }
-    return parsed;
-  } catch {
-    return {};
-  }
-}
-
-function saveApprovalCache(cache) {
-  try {
-    const dir = path.dirname(approvalCacheFile);
-    if (!existsSync(dir)) {
-      mkdirSync(dir, { recursive: true });
-    }
-    writeFileSync(approvalCacheFile, JSON.stringify(cache), "utf8");
-  } catch {
-    // ignore cache write errors
-  }
-}
-
-function readCachedDecision(cacheKey) {
-  if (!cacheKey) {
-    return null;
-  }
-  const cache = loadApprovalCache();
-  const now = Date.now();
-  for (const [key, value] of Object.entries(cache)) {
-    const ts = Number(value?.ts || 0);
-    if (!ts || now - ts > approvalCacheTtlMs) {
-      delete cache[key];
-    }
-  }
-  const record = cache[cacheKey];
-  saveApprovalCache(cache);
-  if (!record) {
-    return null;
-  }
-  const decision = String(record.decision || "");
-  if (decision !== "allow" && decision !== "deny") {
-    return null;
-  }
-  return decision;
-}
-
-function writeCachedDecision(cacheKey, decision) {
-  if (!cacheKey) {
-    return;
-  }
-  const cache = loadApprovalCache();
-  cache[cacheKey] = { decision, ts: Date.now() };
-  saveApprovalCache(cache);
-}
-
-function escapeAppleScriptText(input) {
-  return String(input || "").replaceAll("\\", "\\\\").replaceAll("\"", "\\\"");
-}
-
-async function resolveOsaDecision(command) {
-  const title = "AgentWake Approval";
-  const body = `检测到高风险命令:\\n${command}\\n\\n是否允许执行?`;
-  const script = `display dialog "${escapeAppleScriptText(body)}" with title "${escapeAppleScriptText(title)}" buttons {"Reject","Allow"} default button "Reject" giving up after 20`;
-  try {
-    const { stdout } = await execFileAsync("osascript", ["-e", script]);
-    const text = String(stdout || "");
-    if (/Allow/i.test(text)) {
-      return "allow";
-    }
-    return "deny";
-  } catch {
-    return "deny";
-  }
-}
-
 async function forwardToGateway(params) {
   const { payload, eventName, headers } = params;
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 500);
+  const timer = setTimeout(() => controller.abort(), forwardTimeoutMs);
   try {
     const response = await fetch(gatewayUrl, {
       method: "POST",
@@ -211,6 +72,26 @@ async function forwardToGateway(params) {
   }
 }
 
+function resolveEventName(payload) {
+  return String(payload?.hook_event_name || "").trim();
+}
+
+function isForwardableEvent(eventName) {
+  const lowered = String(eventName || "").trim().toLowerCase();
+  return (
+    lowered === "beforeshellexecution" ||
+    lowered === "aftershellexecution" ||
+    lowered === "stop" ||
+    lowered === "stopfailure" ||
+    lowered === "sessionstart" ||
+    lowered === "sessionend" ||
+    lowered === "notification" ||
+    lowered === "pretooluse" ||
+    lowered === "posttooluse" ||
+    lowered === "posttoolusefailure"
+  );
+}
+
 async function main() {
   try {
     const raw = await readStdin();
@@ -223,79 +104,18 @@ async function main() {
       phase: "hook-received",
       payload,
     });
-    const eventName = String(payload?.hook_event_name || "");
-    if (eventName !== "beforeShellExecution" && eventName !== "afterShellExecution") {
+    const eventName = resolveEventName(payload);
+    if (!isForwardableEvent(eventName)) {
       return;
     }
     const { cursorAgent, qoderAgent, agentMarker } = resolveAgentMarkerFromEnv();
-    const parentChildCount = await resolveParentChildCount();
-    const hasChildProcess = typeof parentChildCount === "number" ? parentChildCount > 0 : false;
 
-    let forwardedPayload = {
+    const forwardedPayload = {
       ...payload,
       cursor_agent: cursorAgent,
       qoder_agent: qoderAgent,
       ...(agentMarker ? { agent_marker: agentMarker } : {}),
-      parent_pid: Number(process.ppid),
-      has_child_process: hasChildProcess,
-      parent_child_count: typeof parentChildCount === "number" ? parentChildCount : 0,
     };
-    if (eventName === "beforeShellExecution" && enforceDangerousAsk) {
-      const command = String(forwardedPayload?.command || "");
-      if (shouldAskForDangerousCommand(command)) {
-        const reasonText = `AgentWake risk policy matched: ${command}`;
-        let reply;
-        let approvalDecision = "ask";
-        if (approvalMode === "osascript") {
-          const cacheKey = resolveApprovalCacheKey(forwardedPayload);
-          const cachedDecision = readCachedDecision(cacheKey);
-          approvalDecision = cachedDecision || (await resolveOsaDecision(command));
-          if (!cachedDecision) {
-            writeCachedDecision(cacheKey, approvalDecision);
-          }
-          if (approvalDecision === "allow") {
-            reply = {
-              continue: true,
-              userMessage: `AgentWake 已同意执行: ${command}`,
-              agentMessage: "User approved via AgentWake osascript dialog.",
-            };
-          } else {
-            reply = {
-              continue: false,
-              permission: "deny",
-              userMessage: `AgentWake 已拒绝执行: ${command}`,
-              agentMessage: "User rejected via AgentWake osascript dialog.",
-            };
-          }
-        } else {
-          reply = {
-            continue: false,
-            permission: "ask",
-            userMessage: `AgentWake 拦截到高风险命令，需手动同意后执行: ${command}`,
-            agentMessage:
-              "High-risk shell command detected by AgentWake policy. Request explicit user approval first.",
-          };
-        }
-        process.stdout.write(`${JSON.stringify(reply)}\n`);
-        forwardedPayload = {
-          ...forwardedPayload,
-          permission: reply.permission,
-          pendingApproval: approvalDecision === "ask",
-          reason: reasonText,
-          requiresApproval: true,
-          approvalMode,
-          approvalDecision,
-        };
-        await writeDebugLog({
-          ts: new Date().toISOString(),
-          phase: "hook-ask-returned",
-          reply,
-          command,
-          approvalMode,
-          approvalDecision,
-        });
-      }
-    }
 
     const headers = {
       "content-type": "application/json",

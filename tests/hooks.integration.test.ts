@@ -19,6 +19,9 @@ function createTestConfig(): AppConfig {
   return {
     host: "127.0.0.1",
     port: 3199,
+    httpsEnabled: false,
+    httpsCertPath: "certs/dev-cert.pem",
+    httpsKeyPath: "certs/dev-key.pem",
     cursorHookPath: "/hooks/cursor",
     claudeHookPath: "/hooks/claude",
     qoderLogPath: undefined,
@@ -31,6 +34,20 @@ function createTestConfig(): AppConfig {
     vapidPrivateKey: undefined,
     vapidSubject: "mailto:test@example.com",
     allowedHookIps: [],
+    dingtalkWebhook: undefined,
+    dingtalkSecret: undefined,
+    feishuWebhook: undefined,
+    feishuSecret: undefined,
+    wecomWebhook: undefined,
+    desktopEnabled: true,
+    pwaEnabled: false,
+    dingtalkEnabled: false,
+    feishuEnabled: false,
+    wecomEnabled: false,
+    qoderEnabled: true,
+    cursorEnabledEvents: ["Notification", "Stop", "StopFailure", "SessionEnd", "SessionStart", "PreToolUse", "PostToolUse"],
+    qoderEnabledEvents: ["Notification", "Stop", "StopFailure", "SessionEnd", "SessionStart", "PreToolUse", "PostToolUse"],
+    claudeEventTitles: {},
   };
 }
 
@@ -41,7 +58,7 @@ describe("hooks integration", () => {
     await Promise.all(cleanup.splice(0).map((fn) => fn()));
   });
 
-  it("accepts cursor hook with token and publishes event", async () => {
+  it("ignores generic approval payload without cursor hook event fields", async () => {
     const notifier = new CaptureNotifier();
     const gateway = createGateway(createTestConfig(), {
       notifiers: [notifier],
@@ -54,12 +71,29 @@ describe("hooks integration", () => {
       .post("/hooks/cursor")
       .send({ requiresApproval: true, message: "waiting for user approval" });
 
-    expect(res.status).toBe(200);
-    expect(notifier.events.length).toBe(1);
-    expect(notifier.events[0]?.editor).toBe("cursor");
+    expect(res.status).toBe(202);
+    expect(notifier.events.length).toBe(0);
   });
 
-  it("accepts marker-based cursor wait signal only with child process", async () => {
+  it("ignores text-only waiting payload without strict approval fields", async () => {
+    const notifier = new CaptureNotifier();
+    const gateway = createGateway(createTestConfig(), {
+      notifiers: [notifier],
+      adapters: [createCursorHookAdapter()],
+    });
+    await gateway.start();
+    cleanup.push(() => gateway.stop());
+
+    const res = await request(gateway.app).post("/hooks/cursor").send({
+      message: "waiting for user approval",
+      status: "awaiting_user_approval",
+    });
+
+    expect(res.status).toBe(202);
+    expect(notifier.events.length).toBe(0);
+  });
+
+  it("notifies immediately when beforeShellExecution carries explicit approval signal", async () => {
     const notifier = new CaptureNotifier();
     const gateway = createGateway(createTestConfig(), {
       notifiers: [notifier],
@@ -72,22 +106,10 @@ describe("hooks integration", () => {
       hook_event_name: "beforeShellExecution",
       command: "npm run build",
       cursor_agent: true,
-      has_child_process: true,
-      parent_child_count: 2,
       generation_id: "g-marker-1",
+      permission: "ask",
     });
     expect(acceptedRes.status).toBe(200);
-    expect(notifier.events.length).toBe(1);
-
-    const ignoredRes = await request(gateway.app).post("/hooks/cursor").send({
-      hook_event_name: "beforeShellExecution",
-      command: "npm run build",
-      cursor_agent: true,
-      has_child_process: false,
-      parent_child_count: 0,
-      generation_id: "g-marker-2",
-    });
-    expect(ignoredRes.status).toBe(202);
     expect(notifier.events.length).toBe(1);
   });
 
@@ -105,8 +127,7 @@ describe("hooks integration", () => {
       command: "sleep 20",
       qoder_agent: true,
       agent_marker: "qoder",
-      has_child_process: true,
-      parent_child_count: 1,
+      permission: "ask",
       generation_id: "qoder-marker-1",
     });
 
@@ -117,7 +138,7 @@ describe("hooks integration", () => {
     expect(notifier.events[0]?.dedupeKey.startsWith("qoder:approval:")).toBe(true);
   });
 
-  it("does not emit lifecycle events for successful shell execution", async () => {
+  it("emits stop lifecycle event for successful shell execution", async () => {
     const notifier = new CaptureNotifier();
     const gateway = createGateway(createTestConfig(), {
       notifiers: [notifier],
@@ -130,8 +151,6 @@ describe("hooks integration", () => {
       hook_event_name: "beforeShellExecution",
       command: "npm run build",
       cursor_agent: true,
-      has_child_process: true,
-      parent_child_count: 1,
       generation_id: "g-resolved-1",
       permission: "ask",
     });
@@ -141,13 +160,13 @@ describe("hooks integration", () => {
       hook_event_name: "afterShellExecution",
       command: "npm run build",
       cursor_agent: true,
-      has_child_process: true,
-      parent_child_count: 1,
       generation_id: "g-resolved-1",
       exit_code: 0,
     });
     expect(afterRes.status).toBe(200);
-    expect(notifier.events.length).toBe(1);
+    expect(notifier.events.length).toBe(2);
+    expect(notifier.events[1]?.title).toContain("任务完成");
+    expect(notifier.events[1]?.dedupeKey.startsWith("cursor:lifecycle:Stop:")).toBe(true);
   });
 
   it("emits lifecycle events on failed afterShellExecution even without matching before signal", async () => {
@@ -163,8 +182,6 @@ describe("hooks integration", () => {
       hook_event_name: "afterShellExecution",
       command: "npm run lint",
       cursor_agent: true,
-      has_child_process: true,
-      parent_child_count: 1,
       generation_id: "g-after-only-1",
       exit_code: 1,
       duration: 1800,
