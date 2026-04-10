@@ -9,7 +9,8 @@
     "scripts/cursor-hook-forwarder.mjs",
     ".env.example",
     ".cursor/hooks.json",
-    "README.md"
+    "README.md",
+    "docs/screenshots/**"
   ],
   "bin": {
     "agentwake": "dist/cli.js"
