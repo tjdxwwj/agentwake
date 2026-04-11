@@ -45,24 +45,24 @@ npm i -g agentwake
 ### Method 1: Interactive Guide (Recommended)
 
 ```bash
-agentwake init     # Generate HTTPS certificate to ~/.agentwake/certs/
-agentwake setup    # Interactive configuration wizard
+agentwake setup    # Interactive setup (~/.agentwake/.env, HTTPS/mkcert, Cursor hooks, Claude hooks, channels, …)
 ```
 
 `setup` will guide you through:
-1. Select AI tools (Claude Code / Cursor / All)
-2. Select event types to listen to
-3. Customize notification titles for each event (optional)
-4. Select notification channels (DingTalk / Feishu / WeCom)
-5. Enter Webhook URLs and secrets
-6. Automatically install Claude Code Hooks to `~/.claude/settings.json`
-7. Start the service
+1. Whether to enable HTTPS (optional mkcert certificates)
+2. Select AI tools (Claude Code / Cursor / Qoder)
+3. Select event types to listen to (Claude)
+4. Customize notification titles for each event (optional)
+5. Select notification channels (DingTalk / Feishu / WeCom / PWA)
+6. Enter Webhook URLs and secrets (if applicable)
+7. Write Cursor `.cursor/hooks.json` (if Cursor selected), install Claude Code hooks (if Claude selected)
+8. Start the service (optional)
 
 ### Method 2: Manual Configuration
 
 ```bash
-agentwake init    # Generate ~/.agentwake/.env and HTTPS certificates
-# Edit ~/.agentwake/.env to fill in configurations
+# Edit ~/.agentwake/.env manually (you can copy from the repo’s .env.example)
+# Fill in values, then:
 agentwake start
 ```
 
@@ -75,10 +75,7 @@ git clone https://github.com/tjdxwwj/agentwake.git
 cd agentwake
 npm install
 
-# Initialize (generate HTTPS certificate and .env)
-npm run init
-
-# Interactive setup
+# Interactive setup (.env, optional mkcert, hooks)
 npm run setup
 
 # Start development server
@@ -168,7 +165,7 @@ Supported Hook events:
 
 ### Cursor
 
-1. Run `agentwake init` in your project
+1. Run `agentwake setup` at the project root and enable Cursor (writes `.cursor/hooks.json`)
 2. Keep `agentwake start` running
 3. Automatic notification when Cursor terminal triggers authorization wait
 
@@ -215,11 +212,14 @@ Your phone needs to trust the local HTTPS certificate to receive Service Worker 
 |------|--------|------|
 | `AGENTWAKE_HOST` | `0.0.0.0` | Listening address |
 | `AGENTWAKE_PORT` | `3199` | Listening port |
-| `AGENTWAKE_HTTPS_ENABLED` | `1` | Enable HTTPS |
+| `AGENTWAKE_HTTPS_ENABLED` | `0` | Enable HTTPS (`1` to enable; mkcert can be run via `agentwake setup`) |
 | `AGENTWAKE_HTTPS_CERT_PATH` | `certs/dev-cert.pem` | HTTPS certificate path |
 | `AGENTWAKE_HTTPS_KEY_PATH` | `certs/dev-key.pem` | HTTPS private key path |
+| `AGENTWAKE_CURSOR_ENABLED` | `1` | Enable Cursor hook adapter (`0` to disable) |
+| `AGENTWAKE_CLAUDE_ENABLED` | `1` | Enable Claude hook adapter (`0` to disable) |
+| `AGENTWAKE_QODER_ENABLED` | `1` | Enable Qoder log adapter (`0` to disable) |
 | `AGENTWAKE_DESKTOP_ENABLED` | `1` | Enable desktop system notifications (`0` to disable) |
-| `AGENTWAKE_PWA_ENABLED` | `1` | Enable PWA/WebSocket push (`0` to disable) |
+| `AGENTWAKE_PWA_ENABLED` | `0` | Enable PWA/WebSocket push (`1` to enable; HTTPS recommended for mobile push) |
 | `AGENTWAKE_DINGTALK_ENABLED` | `1` | Enable DingTalk notifications (`0` to disable) |
 | `AGENTWAKE_DINGTALK_WEBHOOK` | — | DingTalk Webhook URL |
 | `AGENTWAKE_DINGTALK_SECRET` | — | DingTalk signature secret |
@@ -244,8 +244,7 @@ Your phone needs to trust the local HTTPS certificate to receive Service Worker 
 git clone https://github.com/tjdxwwj/agentwake.git
 cd agentwake
 npm install
-cp .env.example .env
-npm run init     # Generate local certificates
+npm run setup    # Interactive ~/.agentwake/.env, optional mkcert
 npm run dev      # Start development server
 npm test         # Run tests
 ```

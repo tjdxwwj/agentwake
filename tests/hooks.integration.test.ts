@@ -1,6 +1,6 @@
 import request from "supertest";
 import { afterEach, describe, expect, it } from "vitest";
-import { createCursorHookAdapter } from "../src/adapters/cursor-hook-adapter";
+import { createCursorHookAdapter } from "../src/adapters/cursor/cursor-hook-adapter";
 import { createGateway } from "../src/bootstrap";
 import type { AppConfig } from "../src/config";
 import type { NotifyEvent } from "../src/domain/notify-event";
@@ -44,9 +44,11 @@ function createTestConfig(): AppConfig {
     dingtalkEnabled: false,
     feishuEnabled: false,
     wecomEnabled: false,
-    qoderEnabled: true,
     cursorEnabledEvents: ["Notification", "Stop", "StopFailure", "SessionEnd", "SessionStart", "PreToolUse", "PostToolUse"],
     qoderEnabledEvents: ["Notification", "Stop", "StopFailure", "SessionEnd", "SessionStart", "PreToolUse", "PostToolUse"],
+    cursorAdapterEnabled: true,
+    claudeAdapterEnabled: true,
+    qoderAdapterEnabled: true,
     claudeEventTitles: {},
   };
 }
@@ -105,37 +107,11 @@ describe("hooks integration", () => {
     const acceptedRes = await request(gateway.app).post("/hooks/cursor").send({
       hook_event_name: "beforeShellExecution",
       command: "npm run build",
-      cursor_agent: true,
       generation_id: "g-marker-1",
       permission: "ask",
     });
     expect(acceptedRes.status).toBe(200);
     expect(notifier.events.length).toBe(1);
-  });
-
-  it("emits qoder event metadata when qoder marker matches", async () => {
-    const notifier = new CaptureNotifier();
-    const gateway = createGateway(createTestConfig(), {
-      notifiers: [notifier],
-      adapters: [createCursorHookAdapter()],
-    });
-    await gateway.start();
-    cleanup.push(() => gateway.stop());
-
-    const res = await request(gateway.app).post("/hooks/cursor").send({
-      hook_event_name: "beforeShellExecution",
-      command: "sleep 20",
-      qoder_agent: true,
-      agent_marker: "qoder",
-      permission: "ask",
-      generation_id: "qoder-marker-1",
-    });
-
-    expect(res.status).toBe(200);
-    expect(notifier.events.length).toBe(1);
-    expect(notifier.events[0]?.editor).toBe("qoder");
-    expect(notifier.events[0]?.title).toContain("Qoder");
-    expect(notifier.events[0]?.dedupeKey.startsWith("qoder:approval:")).toBe(true);
   });
 
   it("emits stop lifecycle event for successful shell execution", async () => {
@@ -150,7 +126,6 @@ describe("hooks integration", () => {
     const beforeRes = await request(gateway.app).post("/hooks/cursor").send({
       hook_event_name: "beforeShellExecution",
       command: "npm run build",
-      cursor_agent: true,
       generation_id: "g-resolved-1",
       permission: "ask",
     });
@@ -159,7 +134,6 @@ describe("hooks integration", () => {
     const afterRes = await request(gateway.app).post("/hooks/cursor").send({
       hook_event_name: "afterShellExecution",
       command: "npm run build",
-      cursor_agent: true,
       generation_id: "g-resolved-1",
       exit_code: 0,
     });
@@ -181,7 +155,6 @@ describe("hooks integration", () => {
     const afterRes = await request(gateway.app).post("/hooks/cursor").send({
       hook_event_name: "afterShellExecution",
       command: "npm run lint",
-      cursor_agent: true,
       generation_id: "g-after-only-1",
       exit_code: 1,
       duration: 1800,
@@ -212,5 +185,47 @@ describe("hooks integration", () => {
     expect(notifier.events.length).toBe(1);
     expect(notifier.events[0]?.title).toContain("会话已结束");
     expect(notifier.events[0]?.dedupeKey.startsWith("cursor:lifecycle:SessionEnd:")).toBe(true);
+  });
+
+  it("does not register cursor/claude routes when adapters are disabled in config", async () => {
+    const notifier = new CaptureNotifier();
+    const config = createTestConfig();
+    config.cursorAdapterEnabled = false;
+    config.claudeAdapterEnabled = false;
+    const gateway = createGateway(config, {
+      notifiers: [notifier],
+    });
+    await gateway.start();
+    cleanup.push(() => gateway.stop());
+
+    const cursorRes = await request(gateway.app).post("/hooks/cursor").send({ hook_event_name: "Notification" });
+    const claudeRes = await request(gateway.app).post("/hooks/claude").send({ hook_event_name: "Notification" });
+    expect(cursorRes.status).toBe(404);
+    expect(claudeRes.status).toBe(404);
+  });
+
+  it("ignores qoder-forwarded payload on /hooks/cursor when qoder adapter is disabled", async () => {
+    const notifier = new CaptureNotifier();
+    const config = createTestConfig();
+    config.qoderAdapterEnabled = false;
+    const gateway = createGateway(config, {
+      notifiers: [notifier],
+      adapters: [createCursorHookAdapter()],
+    });
+    await gateway.start();
+    cleanup.push(() => gateway.stop());
+
+    const res = await request(gateway.app).post("/hooks/cursor").send({
+      __agentwake_client_hint: "qoder",
+      __agentwake_forwarder_cwd: "/Users/wang/.cursor/.qoder",
+      hook_event_name: "beforeShellExecution",
+      command: "sudo echo hi",
+      generation_id: "qoder-forwarded-1",
+      permission: "ask",
+    });
+
+    expect(res.status).toBe(202);
+    expect(res.body?.reason).toBe("qoder-adapter-disabled");
+    expect(notifier.events.length).toBe(0);
   });
 });

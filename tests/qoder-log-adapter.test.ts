@@ -1,12 +1,22 @@
 import { describe, expect, it } from "vitest";
-import { parseQoderLogLine, parseQoderRunConfigFromSettings } from "../src/adapters/qoder-log-adapter";
+import {
+  commandMatchesRuleList,
+  parseQoderLogLine,
+  parseQoderRunConfigFromSettings,
+  qoderCompletionDedupeKeys,
+  qoderLogPendingProbeKey,
+} from "../src/adapters/qoder/qoder-log-adapter";
 
 describe("parseQoderLogLine", () => {
-  it("ignores permission requested line", () => {
+  it("parses permission requested line", () => {
     const signal = parseQoderLogLine(
       '2026-04-08 10:01:02 [info] Tool permission requested toolCallId=toolu_abc toolName=Shell',
     );
-    expect(signal).toBeNull();
+    expect(signal?.type).toBe("approval_requested");
+    if (signal?.type === "approval_requested") {
+      expect(signal.toolCallId).toBe("toolu_abc");
+      expect(signal.toolName).toBe("Shell");
+    }
   });
 
   it("ignores permission resolved line", () => {
@@ -87,25 +97,97 @@ describe("parseQoderLogLine", () => {
   });
 });
 
+describe("commandMatchesRuleList", () => {
+  it("matches prefix and exact rules like deny/allow lists", () => {
+    expect(commandMatchesRuleList("rm -rf /tmp", ["rm"])).toBe(true);
+    expect(commandMatchesRuleList("npm run build", ["npm run"])).toBe(true);
+    expect(commandMatchesRuleList("echo ok", ["rm"])).toBe(false);
+  });
+});
+
+describe("qoderLogPendingProbeKey", () => {
+  it("prefers toolCallId when present", () => {
+    expect(qoderLogPendingProbeKey("npm test", "call_123")).toBe("tc:call_123");
+  });
+
+  it("falls back to trimmed command", () => {
+    expect(qoderLogPendingProbeKey("  ls -la  ", undefined)).toBe("ls -la");
+  });
+});
+
+describe("qoderCompletionDedupeKeys", () => {
+  it("contains specific keys and coarse fallback key", () => {
+    const keys = qoderCompletionDedupeKeys({
+      type: "command_completed",
+      command: "npm run build",
+      toolCallId: "toolu_abc",
+      exitCode: 1,
+      logTimestampSec: 1_744_222_222,
+    });
+    expect(keys).toEqual([
+      "tc:toolu_abc:1",
+      "cmd:npm run build:1",
+      "sec:1744222222:exit:1",
+    ]);
+  });
+
+  it("shares coarse key between detailed and generic completion lines", () => {
+    const detailed = qoderCompletionDedupeKeys({
+      type: "command_completed",
+      command: "cd test",
+      exitCode: 1,
+      logTimestampSec: 1_744_222_333,
+    });
+    const generic = qoderCompletionDedupeKeys({
+      type: "command_completed",
+      command: undefined,
+      exitCode: 1,
+      logTimestampSec: 1_744_222_333,
+    });
+    expect(detailed.some((key) => generic.includes(key))).toBe(true);
+    expect(generic).toEqual(["sec:1744222333:exit:1"]);
+  });
+});
+
+describe("parseQoderLogLine command_started", () => {
+  it("parses Running command: without quoted command=", () => {
+    const signal = parseQoderLogLine("2026-04-09 12:00:00 [info] Running command: pnpm install");
+    expect(signal?.type).toBe("command_started");
+    if (signal?.type === "command_started") {
+      expect(signal.command).toBe("pnpm install");
+    }
+  });
+});
+
+describe("parseQoderLogLine command_completed", () => {
+  it("extracts toolCallId when present", () => {
+    const signal = parseQoderLogLine(
+      '2026-04-09 12:00:01 [info] Command completed: toolCallId=toolu_abc, exitCode=0',
+    );
+    expect(signal?.type).toBe("command_completed");
+    if (signal?.type === "command_completed") {
+      expect(signal.toolCallId).toBe("toolu_abc");
+      expect(signal.exitCode).toBe(0);
+    }
+  });
+});
+
 describe("parseQoderRunConfigFromSettings", () => {
-  it("parses terminal autoRun mode and command allowlist", () => {
+  it("parses command allowlist and denylist", () => {
     const config = parseQoderRunConfigFromSettings(
       JSON.stringify({
         app: {
-          configChatTerminalRunMode: "autoRun",
           configChatCommandAllowlist: "node,python3,npm run",
           configChatCommandDenyList: "rm,sudo",
         },
       }),
     );
-    expect(config.terminalRunMode).toBe("autoRun");
     expect(config.commandAllowlist).toEqual(["node", "python3", "npm run"]);
     expect(config.commandDenylist).toEqual(["rm", "sudo"]);
   });
 
   it("returns fallback on invalid settings json", () => {
     const config = parseQoderRunConfigFromSettings("{invalid");
-    expect(config.terminalRunMode).toBe("unknown");
     expect(config.commandAllowlist).toEqual([]);
     expect(config.commandDenylist).toEqual([]);
   });

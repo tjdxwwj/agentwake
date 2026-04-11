@@ -47,6 +47,7 @@ export class EventRouter {
     const last = this.dedupeTimestamps.get(event.dedupeKey);
     this.gcDedupe(now);
     if (typeof last === "number" && now - last <= this.options.dedupeWindowMs) {
+      logger.info("event skipped (dedupe window)", { source: event.source, dedupeKey: event.dedupeKey });
       return true;
     }
     this.dedupeTimestamps.set(event.dedupeKey, now);

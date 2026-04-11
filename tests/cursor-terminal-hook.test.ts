@@ -6,7 +6,7 @@ import {
   parseCursorSessionEndEvent,
   parseCursorTerminalHookEvent,
   parseCursorTerminalSignal,
-} from "../src/adapters/cursor-terminal-hook";
+} from "../src/adapters/cursor/cursor-terminal-hook";
 
 describe("parseCursorTerminalHookEvent", () => {
   it("ignores normal beforeShellExecution without approval wait signal", () => {
@@ -42,21 +42,6 @@ describe("parseCursorTerminalHookEvent", () => {
     });
 
     expect(event).toBeNull();
-  });
-
-  it("creates qoder event when marker is qoder", () => {
-    const event = parseCursorTerminalHookEvent({
-      hook_event_name: "beforeShellExecution",
-      command: "sleep 20",
-      qoder_agent: true,
-      agent_marker: "qoder",
-      permission: "ask",
-      generation_id: "gen-qoder-1",
-    });
-    expect(event).not.toBeNull();
-    expect(event?.editor).toBe("qoder");
-    expect(event?.title).toContain("Qoder");
-    expect(event?.dedupeKey.startsWith("qoder:approval:")).toBe(true);
   });
 
   it("parses afterShellExecution duration signal", () => {
@@ -96,7 +81,6 @@ describe("parseCursorTerminalHookEvent", () => {
       hook_event_name: "afterShellExecution",
       command: "npm run build",
       generation_id: "gen-resolved",
-      cursor_agent: true,
       exit_code: 0,
     });
     expect(signal).not.toBeNull();
@@ -114,7 +98,6 @@ describe("parseCursorTerminalHookEvent", () => {
       hook_event_name: "afterShellExecution",
       command: "npm run build",
       generation_id: "gen-failed",
-      cursor_agent: true,
       exit_code: 1,
     });
     expect(signal).not.toBeNull();
@@ -262,17 +245,6 @@ describe("parseCursorTerminalHookEvent", () => {
     });
     expect(event).not.toBeNull();
     expect(event?.body).toContain("工具输入: [unserializable-tool-input]");
-  });
-
-  it("parses agent marker", () => {
-    const signal = parseCursorTerminalSignal({
-      hook_event_name: "beforeShellExecution",
-      command: "npm run build",
-      cursor_agent: true,
-      generation_id: "gen-marker",
-    });
-    expect(signal).not.toBeNull();
-    expect(signal?.agentMarker).toBe("cursor");
   });
 
   it("detects potentially dangerous command", () => {

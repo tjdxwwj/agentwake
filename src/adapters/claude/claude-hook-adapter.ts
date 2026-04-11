@@ -1,11 +1,11 @@
 import { z } from "zod";
-import type { GatewayAdapter } from "../gateway/adapter";
-import { createNotifyEvent, type NotifyLevel } from "../domain/notify-event";
+import type { GatewayAdapter } from "../../gateway/adapter";
+import { createNotifyEvent, type NotifyLevel } from "../../domain/notify-event";
 import {
   forbidden,
   parseHookEvent,
   validateHookSourceIp,
-} from "./hook-common";
+} from "../shared/hook-common";
 
 // Claude Code native hook payload schema
 const claudeNativeSchema = z.object({

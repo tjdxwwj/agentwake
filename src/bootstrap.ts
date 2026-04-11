@@ -3,11 +3,11 @@ import { createServer as createHttpServer, type Server as HttpServer } from "nod
 import { createServer as createHttpsServer, type Server as HttpsServer } from "node:https";
 import path from "node:path";
 import express, { type Express } from "express";
-import { createClaudeHookAdapter } from "./adapters/claude-hook-adapter";
-import { createCursorHookAdapter } from "./adapters/cursor-hook-adapter";
-import { createQoderLogAdapter } from "./adapters/qoder-log-adapter";
+import { createClaudeHookAdapter } from "./adapters/claude/claude-hook-adapter";
+import { createCursorHookAdapter } from "./adapters/cursor/cursor-hook-adapter";
+import { createQoderLogAdapter } from "./adapters/qoder/qoder-log-adapter";
 import type { AppConfig } from "./config";
-import type { NotifyEvent } from "./domain/notify-event";
+import { createNotifyEvent, type NotifyEvent } from "./domain/notify-event";
 import type { GatewayAdapter } from "./gateway/adapter";
 import { AdapterRegistry } from "./gateway/adapter-registry";
 import { EventRouter } from "./gateway/event-router";
@@ -79,7 +79,11 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
   const registry = new AdapterRegistry();
   const adapters =
     overrides?.adapters ??
-    [createCursorHookAdapter(), createClaudeHookAdapter(), createQoderLogAdapter()];
+    [
+      ...(config.cursorAdapterEnabled ? [createCursorHookAdapter()] : []),
+      ...(config.claudeAdapterEnabled ? [createClaudeHookAdapter()] : []),
+      ...(config.qoderAdapterEnabled ? [createQoderLogAdapter()] : []),
+    ];
   for (const adapter of adapters) {
     registry.register(adapter);
   }
@@ -94,6 +98,11 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
       wsPath: config.wsPath,
       cursorHookPath: config.cursorHookPath,
       claudeHookPath: config.claudeHookPath,
+      adapters: {
+        cursor: config.cursorAdapterEnabled,
+        claude: config.claudeAdapterEnabled,
+        qoder: config.qoderAdapterEnabled,
+      },
     });
   });
 
@@ -108,6 +117,28 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
       .filter((event) => event.timestamp > sinceTimestamp)
       .sort((a, b) => a.timestamp - b.timestamp);
     res.json({ ok: true, events, now: Date.now() });
+  });
+
+  /** 仅本机：走与 Hook 相同的路由，用于区分「网关/桌面」与「Hook 未触发」 */
+  app.post("/api/debug/desktop-notify-test", (req, res) => {
+    const ip = req.socket.remoteAddress ?? "";
+    const local =
+      ip === "127.0.0.1" || ip === "::1" || ip === "::ffff:127.0.0.1" || ip.endsWith("127.0.0.1");
+    if (!local) {
+      res.status(403).json({ ok: false, error: "localhost only" });
+      return;
+    }
+    const event = createNotifyEvent({
+      source: "debug",
+      editor: "unknown",
+      level: "info",
+      title: "AgentWake 网关自检",
+      body: "若看到本通知，说明网关与桌面通知正常；否则检查系统「通知」权限与 AGENTWAKE_DESKTOP_ENABLED。",
+      dedupeKey: `debug-desktop:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+    });
+    void router.route(event).then(() => {
+      res.json({ ok: true });
+    });
   });
 
   const staticDir = path.resolve(config.webRootPath);

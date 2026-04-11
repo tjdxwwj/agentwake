@@ -1,7 +1,8 @@
 import { z } from "zod";
-import { createNotifyEvent, type NotifyEvent } from "../domain/notify-event";
+import { createNotifyEvent, type NotifyEvent } from "../../domain/notify-event";
 
-const cursorTerminalSchema = z.object({
+/** Cursor / Qoder 终端 Hook 共用载荷（不再解析 agent_marker 等历史字段）。 */
+export const shellHookPayloadSchema = z.object({
   hook_event_name: z.string().optional(),
   conversation_id: z.string().optional(),
   session_id: z.string().optional(),
@@ -38,14 +39,23 @@ const cursorTerminalSchema = z.object({
   output: z.string().optional(),
   sandbox: z.boolean().optional(),
   workspace_roots: z.array(z.string()).optional(),
-  agent_marker: z.enum(["cursor", "qoder"]).optional(),
-  cursor_agent: z.boolean().optional(),
-  qoder_agent: z.boolean().optional(),
 });
+
+export type TerminalHookEditor = "cursor" | "qoder";
+
+const HOOK_SOURCE: Record<TerminalHookEditor, "cursor-hook" | "qoder-hook"> = {
+  cursor: "cursor-hook",
+  qoder: "qoder-hook",
+};
+
+const PRODUCT_LABEL: Record<TerminalHookEditor, "Cursor" | "Qoder"> = {
+  cursor: "Cursor",
+  qoder: "Qoder",
+};
 
 const DANGEROUS_COMMAND_PATTERNS = [/\brm\s+-rf\s+\/(?!tmp\b)/i, /\bsudo\b/i, /\bchmod\s+-R\s+777\b/i];
 
-export type CursorTerminalSignal = {
+export type ShellTerminalSignal = {
   hookEvent: "beforeShellExecution" | "afterShellExecution";
   command: string;
   cwd?: string;
@@ -59,10 +69,9 @@ export type CursorTerminalSignal = {
   sandbox?: boolean;
   status?: string;
   state?: string;
-  agentMarker?: "cursor" | "qoder";
 };
 
-type CursorLifecycleEventName =
+export type ShellLifecycleEventName =
   | "Notification"
   | "Stop"
   | "StopFailure"
@@ -72,7 +81,7 @@ type CursorLifecycleEventName =
   | "PostToolUse"
   | "PostToolUseFailure";
 
-const CURSOR_LIFECYCLE_EVENT_LEVEL: Record<CursorLifecycleEventName, "info" | "warn" | "error"> = {
+const SHELL_LIFECYCLE_EVENT_LEVEL: Record<ShellLifecycleEventName, "info" | "warn" | "error"> = {
   Notification: "warn",
   Stop: "info",
   StopFailure: "error",
@@ -83,7 +92,7 @@ const CURSOR_LIFECYCLE_EVENT_LEVEL: Record<CursorLifecycleEventName, "info" | "w
   PostToolUseFailure: "error",
 };
 
-function normalizeLifecycleEventName(raw: string | undefined): CursorLifecycleEventName | undefined {
+function normalizeLifecycleEventName(raw: string | undefined): ShellLifecycleEventName | undefined {
   if (!raw) {
     return undefined;
   }
@@ -101,14 +110,6 @@ function normalizeLifecycleEventName(raw: string | undefined): CursorLifecycleEv
   if (normalized === "posttooluse") return "PostToolUse";
   if (normalized === "posttoolusefailure") return "PostToolUseFailure";
   return undefined;
-}
-
-export function isPotentiallyDangerousCommand(command: string): boolean {
-  const text = command.trim();
-  if (!text) {
-    return false;
-  }
-  return DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(text));
 }
 
 function compactBody(parts: Array<string | undefined>): string {
@@ -136,21 +137,11 @@ export function hasExplicitApprovalSignal(payload: {
   );
 }
 
-function resolveExplicitApproval(payload: z.infer<typeof cursorTerminalSchema>): boolean {
+function resolveExplicitApproval(payload: z.infer<typeof shellHookPayloadSchema>): boolean {
   return hasExplicitApprovalSignal(payload);
 }
 
-function resolveAgentMarker(payload: z.infer<typeof cursorTerminalSchema>): "cursor" | "qoder" | undefined {
-  if (payload.agent_marker === "cursor" || payload.cursor_agent === true) {
-    return "cursor";
-  }
-  if (payload.agent_marker === "qoder" || payload.qoder_agent === true) {
-    return "qoder";
-  }
-  return undefined;
-}
-
-function resolveHookEvent(payload: z.infer<typeof cursorTerminalSchema>): "beforeShellExecution" | "afterShellExecution" | null {
+function resolveHookEvent(payload: z.infer<typeof shellHookPayloadSchema>): "beforeShellExecution" | "afterShellExecution" | null {
   const rawEvent = payload.hook_event_name?.trim();
   if (rawEvent === "beforeShellExecution" || rawEvent === "afterShellExecution") {
     return rawEvent;
@@ -158,8 +149,8 @@ function resolveHookEvent(payload: z.infer<typeof cursorTerminalSchema>): "befor
   return null;
 }
 
-export function parseCursorTerminalSignal(body: unknown): CursorTerminalSignal | null {
-  const parsed = cursorTerminalSchema.safeParse(body);
+export function parseShellTerminalSignal(body: unknown): ShellTerminalSignal | null {
+  const parsed = shellHookPayloadSchema.safeParse(body);
   if (!parsed.success) {
     return null;
   }
@@ -172,7 +163,6 @@ export function parseCursorTerminalSignal(body: unknown): CursorTerminalSignal |
   if (!command) {
     return null;
   }
-  const agentMarker = resolveAgentMarker(payload);
   return {
     hookEvent,
     command,
@@ -187,25 +177,32 @@ export function parseCursorTerminalSignal(body: unknown): CursorTerminalSignal |
     ...(typeof payload.sandbox === "boolean" ? { sandbox: payload.sandbox } : {}),
     ...(payload.status ? { status: payload.status } : {}),
     ...(payload.state ? { state: payload.state } : {}),
-    ...(agentMarker ? { agentMarker } : {}),
   };
 }
 
-export function resolveCursorSignalKey(signal: CursorTerminalSignal): string {
+export function resolveShellSignalKey(signal: ShellTerminalSignal): string {
   const idPart = signal.generationId ?? signal.conversationId ?? "unknown";
   return `${idPart}:${signal.command}`;
 }
 
-export function createCursorApprovalEvent(params: {
-  signal: CursorTerminalSignal;
+export function isPotentiallyDangerousCommand(command: string): boolean {
+  const text = command.trim();
+  if (!text) {
+    return false;
+  }
+  return DANGEROUS_COMMAND_PATTERNS.some((pattern) => pattern.test(text));
+}
+
+export function createShellApprovalEvent(params: {
+  signal: ShellTerminalSignal;
+  editor: TerminalHookEditor;
   reason?: string;
   waitMs?: number;
 }): NotifyEvent {
-  const { signal } = params;
-  const isQoderSignal = signal.agentMarker === "qoder";
-  const source = isQoderSignal ? "qoder-hook" : "cursor-hook";
-  const editor = isQoderSignal ? "qoder" : "cursor";
-  const title = isQoderSignal ? "Qoder 终端等待用户同意" : "Cursor 终端等待用户同意";
+  const { signal, editor } = params;
+  const source = HOOK_SOURCE[editor];
+  const product = PRODUCT_LABEL[editor];
+  const title = `${product} 终端等待用户同意`;
   const waitSec =
     typeof params.waitMs === "number" && Number.isFinite(params.waitMs) ? params.waitMs / 1000 : undefined;
   const waitToken = typeof waitSec === "number" ? `${waitSec.toFixed(1)}s` : undefined;
@@ -215,6 +212,7 @@ export function createCursorApprovalEvent(params: {
       signal.cwd ? `目录: ${signal.cwd}` : undefined,
       params.reason ? `原因: ${params.reason}` : undefined,
       waitToken ? `等待时长: ${waitToken}` : undefined,
+      `来源: ${source}`,
     ]) || signal.command;
 
   return createNotifyEvent({
@@ -223,7 +221,7 @@ export function createCursorApprovalEvent(params: {
     level: "warn",
     title,
     body: bodyText,
-    dedupeKey: `${editor}:approval:${resolveCursorSignalKey(signal)}`,
+    dedupeKey: `${editor}:approval:${resolveShellSignalKey(signal)}`,
     meta: {
       eventName: "Notification",
       hookEvent: signal.hookEvent,
@@ -234,21 +232,19 @@ export function createCursorApprovalEvent(params: {
       reason: params.reason,
       waitMs: params.waitMs,
       explicitApproval: signal.explicitApproval,
-      agentMarker: signal.agentMarker,
     },
   });
 }
 
-export function createCursorLifecycleEvents(params: {
-  signal: CursorTerminalSignal;
+export function createShellLifecycleStopEvents(params: {
+  signal: ShellTerminalSignal;
+  editor: TerminalHookEditor;
 }): NotifyEvent[] {
-  const { signal } = params;
-  const isQoderSignal = signal.agentMarker === "qoder";
-  const source = isQoderSignal ? "qoder-hook" : "cursor-hook";
-  const editor = isQoderSignal ? "qoder" : "cursor";
-  const baseTitle = isQoderSignal ? "Qoder" : "Cursor";
+  const { signal, editor } = params;
+  const source = HOOK_SOURCE[editor];
+  const product = PRODUCT_LABEL[editor];
   const stopEventName = typeof signal.exitCode === "number" && signal.exitCode !== 0 ? "StopFailure" : "Stop";
-  const stopTitle = stopEventName === "StopFailure" ? `${baseTitle}: 任务异常终止` : `${baseTitle}: 任务完成`;
+  const stopTitle = stopEventName === "StopFailure" ? `${product}: 任务异常终止` : `${product}: 任务完成`;
   const exitCodeToken = typeof signal.exitCode === "number" ? `退出码: ${signal.exitCode}` : undefined;
   const statusToken = signal.status ? `状态: ${signal.status}` : signal.state ? `状态: ${signal.state}` : undefined;
   const durationToken = typeof signal.durationMs === "number" ? `耗时: ${(signal.durationMs / 1000).toFixed(1)}s` : undefined;
@@ -259,9 +255,10 @@ export function createCursorLifecycleEvents(params: {
       durationToken,
       exitCodeToken,
       statusToken,
+      `来源: ${source}`,
     ]) || signal.command;
   const stopLevel = stopEventName === "StopFailure" ? "error" : "info";
-  const signalKey = resolveCursorSignalKey(signal);
+  const signalKey = resolveShellSignalKey(signal);
   const commonMeta = {
     hookEvent: signal.hookEvent,
     command: signal.command,
@@ -275,7 +272,6 @@ export function createCursorLifecycleEvents(params: {
     explicitApproval: signal.explicitApproval,
     output: signal.output,
     sandbox: signal.sandbox,
-    agentMarker: signal.agentMarker,
   };
   return [
     createNotifyEvent({
@@ -293,26 +289,6 @@ export function createCursorLifecycleEvents(params: {
   ];
 }
 
-export function parseCursorSessionEndEvent(body: unknown): NotifyEvent | null {
-  return parseCursorLifecycleHookEventInternal(body, "SessionEnd");
-}
-
-function resolveLifecycleContext(payload: z.infer<typeof cursorTerminalSchema>): {
-  source: "cursor-hook" | "qoder-hook";
-  editor: "cursor" | "qoder";
-  baseTitle: "Cursor" | "Qoder";
-  agentMarker: "cursor" | "qoder" | undefined;
-} {
-  const agentMarker = resolveAgentMarker(payload);
-  const isQoderSignal = agentMarker === "qoder";
-  return {
-    source: isQoderSignal ? "qoder-hook" : "cursor-hook",
-    editor: isQoderSignal ? "qoder" : "cursor",
-    baseTitle: isQoderSignal ? "Qoder" : "Cursor",
-    agentMarker,
-  };
-}
-
 function safeJsonStringify(value: unknown): string {
   try {
     return JSON.stringify(value);
@@ -321,11 +297,12 @@ function safeJsonStringify(value: unknown): string {
   }
 }
 
-function parseCursorLifecycleHookEventInternal(
+export function parseShellLifecycleHookEventInternal(
   body: unknown,
-  expectedEventName?: CursorLifecycleEventName,
+  editor: TerminalHookEditor,
+  expectedEventName?: ShellLifecycleEventName,
 ): NotifyEvent | null {
-  const parsed = cursorTerminalSchema.safeParse(body);
+  const parsed = shellHookPayloadSchema.safeParse(body);
   if (!parsed.success) {
     return null;
   }
@@ -337,7 +314,8 @@ function parseCursorLifecycleHookEventInternal(
   if (expectedEventName && hookEvent !== expectedEventName) {
     return null;
   }
-  const { source, editor, baseTitle, agentMarker } = resolveLifecycleContext(payload);
+  const source = HOOK_SOURCE[editor];
+  const baseTitle = PRODUCT_LABEL[editor];
   const sessionKey =
     [
       payload.conversation_id,
@@ -412,7 +390,7 @@ function parseCursorLifecycleHookEventInternal(
       payload.state ? `阶段: ${payload.state}` : undefined,
       payload.cwd ? `目录: ${payload.cwd}` : undefined,
     ]) || `${hookEvent} 事件`;
-  const eventTitleMap: Record<CursorLifecycleEventName, string> = {
+  const eventTitleMap: Record<ShellLifecycleEventName, string> = {
     Notification: `${baseTitle}: 需要你的注意`,
     Stop: `${baseTitle}: 任务完成`,
     StopFailure: `${baseTitle}: 任务异常终止`,
@@ -425,7 +403,7 @@ function parseCursorLifecycleHookEventInternal(
   return createNotifyEvent({
     source,
     editor,
-    level: CURSOR_LIFECYCLE_EVENT_LEVEL[hookEvent],
+    level: SHELL_LIFECYCLE_EVENT_LEVEL[hookEvent],
     title: eventTitleMap[hookEvent],
     body: bodyText,
     dedupeKey: `${editor}:lifecycle:${hookEvent}:${sessionKey}`,
@@ -453,19 +431,22 @@ function parseCursorLifecycleHookEventInternal(
       errorMessage: payload.error_message,
       failureType: payload.failure_type,
       isInterrupt: payload.is_interrupt,
-      agentMarker,
     },
   });
 }
 
-export function parseCursorTerminalHookEvent(body: unknown): NotifyEvent | null {
-  const signal = parseCursorTerminalSignal(body);
+export function parseShellLifecycleHookEvent(body: unknown, editor: TerminalHookEditor): NotifyEvent | null {
+  return parseShellLifecycleHookEventInternal(body, editor, undefined);
+}
+
+export function parseShellSessionEndEvent(body: unknown, editor: TerminalHookEditor): NotifyEvent | null {
+  return parseShellLifecycleHookEventInternal(body, editor, "SessionEnd");
+}
+
+export function parseShellTerminalHookEvent(body: unknown, editor: TerminalHookEditor): NotifyEvent | null {
+  const signal = parseShellTerminalSignal(body);
   if (!signal || signal.hookEvent !== "beforeShellExecution" || !signal.explicitApproval) {
     return null;
   }
-  return createCursorApprovalEvent({ signal, reason: "explicit-hook-signal" });
-}
-
-export function parseCursorLifecycleHookEvent(body: unknown): NotifyEvent | null {
-  return parseCursorLifecycleHookEventInternal(body, undefined);
+  return createShellApprovalEvent({ signal, editor, reason: "explicit-hook-signal" });
 }

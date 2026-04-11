@@ -1,4 +1,15 @@
 {
   "version": 1,
-  "hooks": {}
+  "hooks": {
+    "beforeShellExecution": [
+      {
+        "command": "AGENTWAKE_GATEWAY_URL=\"${AGENTWAKE_GATEWAY_URL:-https://127.0.0.1:3199/hooks/cursor}\" node \"./scripts/cursor-hook-forwarder.mjs\""
+      }
+    ],
+    "afterShellExecution": [
+      {
+        "command": "AGENTWAKE_GATEWAY_URL=\"${AGENTWAKE_GATEWAY_URL:-https://127.0.0.1:3199/hooks/cursor}\" node \"./scripts/cursor-hook-forwarder.mjs\""
+      }
+    ]
+  }
 }

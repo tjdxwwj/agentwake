@@ -1,4 +1,8 @@
 #!/usr/bin/env node
+/**
+ * Cursor 专用 Hook 转发：只应配置在 Cursor 的 .cursor/hooks.json 里。
+ * 默认 POST http://127.0.0.1:3199/hooks/cursor；可用 AGENTWAKE_GATEWAY_URL 覆盖（须以 /hooks/cursor 结尾）。
+ */
 import process from "node:process";
 import path from "node:path";
 import { mkdir, appendFile } from "node:fs/promises";
@@ -12,16 +16,18 @@ const forwardTimeoutMs = Number.isFinite(Number(process.env.AGENTWAKE_CURSOR_FOR
   ? Math.max(100, Number(process.env.AGENTWAKE_CURSOR_FORWARD_TIMEOUT_MS))
   : 800;
 
-function isEnabledAgentFlag(name) {
-  const raw = String(process.env[name] || "").trim().toLowerCase();
-  return raw !== "" && raw !== "0" && raw !== "false" && raw !== "no";
-}
-
-function resolveAgentMarkerFromEnv() {
-  const cursorAgent = isEnabledAgentFlag("CURSOR_AGENT");
-  const qoderAgent = isEnabledAgentFlag("QODER_AGENT");
-  const agentMarker = cursorAgent ? "cursor" : qoderAgent ? "qoder" : undefined;
-  return { cursorAgent, qoderAgent, agentMarker };
+function resolveClientHint() {
+  const envHint = String(process.env.AGENTWAKE_CLIENT_HINT || "")
+    .trim()
+    .toLowerCase();
+  if (envHint === "cursor" || envHint === "qoder") {
+    return envHint;
+  }
+  const cwd = process.cwd().toLowerCase();
+  if (cwd.includes("/.qoder") || cwd.includes("\\.qoder")) {
+    return "qoder";
+  }
+  return "cursor";
 }
 
 async function writeDebugLog(record) {
@@ -99,30 +105,26 @@ async function main() {
       return;
     }
     const payload = JSON.parse(raw);
+    const clientHint = resolveClientHint();
+    const enrichedPayload = {
+      ...payload,
+      __agentwake_client_hint: clientHint,
+      __agentwake_forwarder_cwd: process.cwd(),
+    };
     await writeDebugLog({
       ts: new Date().toISOString(),
       phase: "hook-received",
-      payload,
+      payload: enrichedPayload,
     });
-    const eventName = resolveEventName(payload);
+    const eventName = resolveEventName(enrichedPayload);
     if (!isForwardableEvent(eventName)) {
       return;
     }
-    const { cursorAgent, qoderAgent, agentMarker } = resolveAgentMarkerFromEnv();
-
-    const forwardedPayload = {
-      ...payload,
-      cursor_agent: cursorAgent,
-      qoder_agent: qoderAgent,
-      ...(agentMarker ? { agent_marker: agentMarker } : {}),
-    };
-
     const headers = {
       "content-type": "application/json",
     };
-    await forwardToGateway({ payload: forwardedPayload, eventName, headers });
+    await forwardToGateway({ payload: enrichedPayload, eventName, headers });
   } catch (error) {
-    // Hook should never block Cursor's main flow.
     process.stderr.write(`[agentwake] cursor hook forward failed: ${String(error)}\n`);
     await writeDebugLog({
       ts: new Date().toISOString(),

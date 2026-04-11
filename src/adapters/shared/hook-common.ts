@@ -1,7 +1,7 @@
 import type { Request, Response } from "express";
 import { z } from "zod";
-import { createNotifyEvent, type EditorKind, type NotifyEvent } from "../domain/notify-event";
-import { isApprovalWaitingText } from "../utils/approval-match";
+import { createNotifyEvent, type EditorKind, type NotifyEvent } from "../../domain/notify-event";
+import { isApprovalWaitingText } from "../../utils/approval-match";
 
 const hookPayloadSchema = z.object({
   title: z.string().optional(),

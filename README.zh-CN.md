@@ -45,23 +45,23 @@ npm i -g agentwake
 ### 方式一：交互式引导（推荐）
 
 ```bash
-agentwake init     # 生成 HTTPS 证书到 ~/.agentwake/certs/
-agentwake setup    # 交互式配置向导
+agentwake setup    # 交互式配置（~/.agentwake/.env、HTTPS/mkcert、Cursor hooks、Claude hooks、渠道等）
 ```
 
 `setup` 会引导你完成：
-1. 选择 AI 工具（Claude Code / Cursor / 全部）
-2. 选择监听的事件类型
-3. 自定义每个事件的通知标题（可选）
-4. 选择通知渠道（钉钉 / 飞书 / 企业微信）
-5. 输入 Webhook 地址和密钥
-6. 自动安装 Claude Code Hooks 到 `~/.claude/settings.json`
-7. 启动服务
+1. 是否启用 HTTPS（可选 mkcert 证书）
+2. 选择 AI 工具（Claude Code / Cursor / Qoder）
+3. 选择监听的事件类型（Claude）
+4. 自定义每个事件的通知标题（可选）
+5. 选择通知渠道（钉钉 / 飞书 / 企业微信 / PWA）
+6. 输入 Webhook 地址和密钥（若选了 IM）
+7. 写入 Cursor `.cursor/hooks.json`（若选了 Cursor）、安装 Claude Code Hooks（若选了 Claude）
+8. 启动服务（可选）
 
 ### 方式二：手动配置
 
 ```bash
-agentwake init    # 生成 ~/.agentwake/.env 和 HTTPS 证书
+# 直接编辑 ~/.agentwake/.env（可从仓库 .env.example 拷贝到 ~/.agentwake/.env）
 # 编辑 ~/.agentwake/.env 填入配置
 agentwake start
 ```
@@ -75,10 +75,7 @@ git clone https://github.com/tjdxwwj/agentwake.git
 cd agentwake
 npm install
 
-# 初始化（生成 HTTPS 证书和 .env）
-npm run init
-
-# 交互式配置
+# 交互式配置（含 .env、HTTPS/mkcert、hooks）
 npm run setup
 
 # 启动开发服务器
@@ -168,7 +165,7 @@ AGENTWAKE_WECOM_WEBHOOK=https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx
 
 ### Cursor
 
-1. 在项目中执行 `agentwake init`
+1. 在项目根目录执行 `agentwake setup` 并勾选 Cursor（会写入 `.cursor/hooks.json`）
 2. 保持 `agentwake start` 运行
 3. Cursor 终端触发授权等待时自动通知
 
@@ -215,11 +212,14 @@ AGENTWAKE_CLAUDE_TITLE_SESSION_END=会话结束了
 |------|--------|------|
 | `AGENTWAKE_HOST` | `0.0.0.0` | 监听地址 |
 | `AGENTWAKE_PORT` | `3199` | 监听端口 |
-| `AGENTWAKE_HTTPS_ENABLED` | `1` | 是否启用 HTTPS |
+| `AGENTWAKE_HTTPS_ENABLED` | `0` | 是否启用 HTTPS（`1` 开启；证书可在 `agentwake setup` 中启用 mkcert） |
 | `AGENTWAKE_HTTPS_CERT_PATH` | `certs/dev-cert.pem` | HTTPS 证书路径 |
 | `AGENTWAKE_HTTPS_KEY_PATH` | `certs/dev-key.pem` | HTTPS 私钥路径 |
+| `AGENTWAKE_CURSOR_ENABLED` | `1` | 是否启用 Cursor Hook 适配器（`0` 关闭） |
+| `AGENTWAKE_CLAUDE_ENABLED` | `1` | 是否启用 Claude Hook 适配器（`0` 关闭） |
+| `AGENTWAKE_QODER_ENABLED` | `1` | 是否启用 Qoder 日志适配器（`0` 关闭） |
 | `AGENTWAKE_DESKTOP_ENABLED` | `1` | 是否启用桌面系统通知（`0` 关闭） |
-| `AGENTWAKE_PWA_ENABLED` | `1` | 是否启用 PWA/WebSocket 推送（`0` 关闭） |
+| `AGENTWAKE_PWA_ENABLED` | `0` | 是否启用 PWA/WebSocket 推送（`1` 开启；手机推送建议配 HTTPS） |
 | `AGENTWAKE_DINGTALK_ENABLED` | `1` | 是否启用钉钉通知（`0` 关闭） |
 | `AGENTWAKE_DINGTALK_WEBHOOK` | — | 钉钉 Webhook URL |
 | `AGENTWAKE_DINGTALK_SECRET` | — | 钉钉签名密钥 |
@@ -244,8 +244,7 @@ AGENTWAKE_CLAUDE_TITLE_SESSION_END=会话结束了
 git clone https://github.com/tjdxwwj/agentwake.git
 cd agentwake
 npm install
-cp .env.example .env
-npm run init     # 生成本地证书
+npm run setup    # 交互式生成 ~/.agentwake/.env、可选 mkcert
 npm run dev      # 启动开发服务器
 npm test         # 运行测试
 ```

@@ -1,13 +1,21 @@
-import { select, checkbox, input, password, confirm } from "@inquirer/prompts";
-import { copyFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { checkbox, input, password, confirm } from "@inquirer/prompts";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ClaudeCodeInstaller } from "./installers/claude-code-installer";
-import { ensureHome, homePath, PKG_ROOT } from "./paths";
+import { ensureHome, homePath } from "./paths";
+import {
+  ensureCursorShellHooks,
+  ensureEnvFile,
+  ensureHooksHttps,
+  ensureHttpsEnv,
+  ensureNodeExtraCaEnvHint,
+  setupMkcert,
+} from "./setup-bootstrap";
 
 const CLAUDE_CODE_EVENTS = [
   { name: "Notification — 需要用户注意时", value: "Notification", defaultEnabled: true },
-  { name: "Stop — 任务完成停止时", value: "Stop", defaultEnabled: true },
+  { name: "Stop — 任务完成停止时", value: "Stop", defaultEnabled: false },
   { name: "StopFailure — 任务失败停止时", value: "StopFailure", defaultEnabled: true },
   { name: "SessionEnd — 会话结束时", value: "SessionEnd", defaultEnabled: true },
   { name: "SessionStart — 会话开始时", value: "SessionStart", defaultEnabled: false },
@@ -84,23 +92,49 @@ export async function runSetup(): Promise<void> {
   console.log("\n🔧 AgentWake 配置向导\n");
 
   ensureHome();
+  ensureEnvFile();
   const envPath = homePath(".env");
 
-  // Step 1: Select AI tool
-  const aiTool = await select({
+  const useHttps = await confirm({
+    message:
+      "是否启用 HTTPS？（手机 / PWA 访问建议开启；需本机已安装 mkcert，例如 brew install mkcert）",
+    default: false,
+  });
+  ensureHttpsEnv(useHttps);
+  if (useHttps) {
+    setupMkcert();
+    ensureNodeExtraCaEnvHint();
+  }
+
+  // Step 1: Select AI tools（多选；↑↓ 移动，空格勾选，a 全选，i 反选，回车确认）
+  const aiTools = await checkbox({
     message: "选择要配置的 AI 工具",
+    required: true,
     choices: [
-      { name: "Claude Code", value: "claude-code" },
-      { name: "Cursor", value: "cursor" },
-      { name: "全部", value: "all" },
+      { name: "Claude Code", value: "claude-code", checked: true },
+      { name: "Cursor", value: "cursor", checked: true },
+      { name: "Qoder", value: "qoder", checked: false },
     ],
   });
 
+  const wantClaude = aiTools.includes("claude-code");
+  const wantCursor = aiTools.includes("cursor");
+  const wantQoder = aiTools.includes("qoder");
+
+  let qoderLogPathInput = "";
+  if (wantQoder) {
+    qoderLogPathInput = await input({
+      message: "Qoder agent.log 路径（可选，留空则按常见安装目录自动发现）：",
+      default: "",
+    });
+  }
+
   // Step 2: Select Claude Code events (if applicable)
   let selectedEvents: string[] = [];
-  if (aiTool === "claude-code" || aiTool === "all") {
+  if (wantClaude) {
     selectedEvents = await checkbox({
       message: "选择要监听的 Claude Code 事件",
+      required: false,
       choices: CLAUDE_CODE_EVENTS.map((e) => ({
         name: e.name,
         value: e.value,
@@ -143,18 +177,22 @@ export async function runSetup(): Promise<void> {
 
   // Step 3: Select notification channels
   const channels = await checkbox({
-    message: "选择通知渠道（PWA 和桌面通知默认启用）",
+    message: "选择通知渠道（桌面通知默认开启；PWA 默认关闭，需 HTTPS 时建议开启）",
+    required: false,
     choices: [
       { name: "钉钉 Webhook", value: "dingtalk" },
       { name: "飞书 Webhook", value: "feishu" },
       { name: "企业微信 Webhook", value: "wecom" },
-      { name: "PWA 网页推送（已内置，无需配置）", value: "pwa", checked: true, disabled: "默认启用" },
-      { name: "桌面系统通知（已内置，无需配置）", value: "desktop", checked: true, disabled: "默认启用" },
+      { name: "PWA 网页推送 / WebSocket（默认关闭）", value: "pwa", checked: false },
+      { name: "桌面系统通知（已内置）", value: "desktop", checked: true, disabled: "默认启用" },
     ],
   });
 
   // Step 4: Collect webhook configs
   const envVars: Record<string, string> = {};
+  envVars.AGENTWAKE_CURSOR_ENABLED = wantCursor ? "1" : "0";
+  envVars.AGENTWAKE_CLAUDE_ENABLED = wantClaude ? "1" : "0";
+  envVars.AGENTWAKE_QODER_ENABLED = wantQoder ? "1" : "0";
 
   if (channels.includes("dingtalk")) {
     const webhook = await input({
@@ -189,14 +227,14 @@ export async function runSetup(): Promise<void> {
     envVars.AGENTWAKE_WECOM_WEBHOOK = webhook;
   }
 
-  // Step 5: Ensure .env exists in ~/.agentwake/
-  if (!existsSync(envPath)) {
-    const exampleSrc = path.join(PKG_ROOT, ".env.example");
-    if (existsSync(exampleSrc)) {
-      copyFileSync(exampleSrc, envPath);
-    }
-    console.log(`📄 已创建 ${envPath}`);
+  if (wantQoder && qoderLogPathInput.trim()) {
+    envVars.AGENTWAKE_QODER_LOG_PATH = qoderLogPathInput.trim();
+  } else if (!wantQoder) {
+    // Disable stale explicit path to avoid confusion when Qoder adapter is turned off.
+    envVars.AGENTWAKE_QODER_LOG_PATH = "";
   }
+
+  envVars.AGENTWAKE_PWA_ENABLED = channels.includes("pwa") ? "1" : "0";
 
   // Merge title vars into envVars
   Object.assign(envVars, eventTitleVars);
@@ -208,20 +246,27 @@ export async function runSetup(): Promise<void> {
   }
 
   // Step 6: Install Claude Code hooks
-  if (aiTool === "claude-code" || aiTool === "all") {
-    if (selectedEvents.length > 0) {
-      const existing = readEnvFile(envPath);
-      const httpsEnabled = existing.AGENTWAKE_HTTPS_ENABLED === "1";
-      const port = existing.AGENTWAKE_PORT || "3199";
-      const protocol = httpsEnabled ? "https" : "http";
-      const gatewayUrl = `${protocol}://127.0.0.1:${port}`;
+  if (wantClaude && selectedEvents.length > 0) {
+    const existing = readEnvFile(envPath);
+    const httpsEnabled = existing.AGENTWAKE_HTTPS_ENABLED === "1";
+    const port = existing.AGENTWAKE_PORT || "3199";
+    const protocol = httpsEnabled ? "https" : "http";
+    const gatewayUrl = `${protocol}://127.0.0.1:${port}`;
 
-      const installer = new ClaudeCodeInstaller(gatewayUrl);
-      await installer.install(selectedEvents);
-      console.log(`✅ Claude Code hooks 已安装 (${selectedEvents.length} 个事件)`);
-      console.log(`   脚本路径: ${path.join(os.homedir(), ".agentwake", "hooks", "claude-hook-relay.sh")}`);
-    }
+    const installer = new ClaudeCodeInstaller(gatewayUrl);
+    await installer.install(selectedEvents);
+    console.log(`✅ Claude Code hooks 已安装 (${selectedEvents.length} 个事件)`);
+    console.log(`   脚本路径: ${path.join(os.homedir(), ".agentwake", "hooks", "claude-hook-relay.sh")}`);
   }
+
+  if (wantCursor) {
+    ensureCursorShellHooks();
+    console.log(
+      `\n✅ Cursor：已在项目根目录写入/补全 .cursor/hooks.json（终端 stdin → cursor-hook-forwarder → 网关）\n`,
+    );
+  }
+
+  ensureHooksHttps();
 
   // Step 7: Start server
   const shouldStart = await confirm({
@@ -232,20 +277,20 @@ export async function runSetup(): Promise<void> {
   if (shouldStart) {
     // Load env and start
     const dotenv = await import("dotenv");
-    dotenv.config({ path: envPath });
+    dotenv.config({ path: envPath, override: true });
     // Apply our new env vars too
     for (const [key, value] of Object.entries(envVars)) {
       process.env[key] = value;
     }
-    process.env.AGENTWAKE_HTTPS_ENABLED = "1";
 
     const { runGateway } = await import("./run-gateway");
     await runGateway();
   }
 
   const localIp = getLocalIp();
-  if (localIp) {
-    const existing = readEnvFile(envPath);
+  const existing = readEnvFile(envPath);
+  const pwaEnabled = existing.AGENTWAKE_PWA_ENABLED === "1";
+  if (localIp && pwaEnabled) {
     const port = existing.AGENTWAKE_PORT || "3199";
     const protocol = existing.AGENTWAKE_HTTPS_ENABLED === "1" ? "https" : "http";
     console.log(`\n📱 手机浏览器打开：${protocol}://${localIp}:${port}`);

@@ -4,11 +4,11 @@ import { execFile } from "node:child_process";
 import { homedir } from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
-import type { GatewayAdapter } from "../gateway/adapter";
+import type { GatewayAdapter } from "../../gateway/adapter";
 import {
   forbidden,
   validateHookSourceIp,
-} from "./hook-common";
+} from "../shared/hook-common";
 import {
   createCursorApprovalEvent,
   createCursorLifecycleEvents,
@@ -19,12 +19,12 @@ import {
   resolveCursorSignalKey,
   type CursorTerminalSignal,
 } from "./cursor-terminal-hook";
-import { logger } from "../utils/logger";
+import { logger } from "../../utils/logger";
 import {
   createEmptyCursorCommandMemory,
   isCommandInCursorMemoryAllowlist,
   type CursorCommandMemory,
-} from "../utils/cursor-command-memory";
+} from "../../utils/cursor-command-memory";
 
 const execFileAsync = promisify(execFile);
 const CURSOR_GLOBAL_STATE_DB = path.join(
@@ -165,18 +165,34 @@ function resolveCursorAgentRunMode(state: CursorAutoRunState): CursorAgentRunMod
   return "unknown-combination";
 }
 
+function resolveAgentwakeClientHint(body: unknown): "cursor" | "qoder" | "unknown" {
+  if (!body || typeof body !== "object") {
+    return "unknown";
+  }
+  const record = body as Record<string, unknown>;
+  const hint = String(record.__agentwake_client_hint ?? "")
+    .trim()
+    .toLowerCase();
+  if (hint === "cursor" || hint === "qoder") {
+    return hint;
+  }
+  const forwarderCwd = String(record.__agentwake_forwarder_cwd ?? "").toLowerCase();
+  if (forwarderCwd.includes("/.qoder") || forwarderCwd.includes("\\.qoder")) {
+    return "qoder";
+  }
+  return "unknown";
+}
+
 export function createCursorHookAdapter(): GatewayAdapter {
   return {
     id: "cursor-hook-adapter",
     start(context) {
       const cursorEnabledEvents = new Set(context.config.cursorEnabledEvents);
-      const qoderEnabledEvents = new Set(context.config.qoderEnabledEvents);
-      const isEditorEventEnabled = (editor: "cursor" | "qoder", eventName: string | undefined): boolean => {
-        const enabledEvents = editor === "qoder" ? qoderEnabledEvents : cursorEnabledEvents;
+      const isCursorEventEnabled = (eventName: string | undefined): boolean => {
         if (!eventName) {
-          return enabledEvents.has("Notification");
+          return cursorEnabledEvents.has("Notification");
         }
-        return enabledEvents.has(eventName);
+        return cursorEnabledEvents.has(eventName);
       };
 
       const emitInBackground = (event: ReturnType<typeof createCursorApprovalEvent>): void => {
@@ -283,8 +299,7 @@ export function createCursorHookAdapter(): GatewayAdapter {
           }
           const waitMs = Math.max(0, Date.now() - pending.requestedAtMs);
           pending.notified = true;
-          const editor = pending.signal.agentMarker === "qoder" ? "qoder" : "cursor";
-          if (!isEditorEventEnabled(editor, "Notification")) {
+          if (!isCursorEventEnabled("Notification")) {
             cleanupPendingSignal(key);
             return;
           }
@@ -315,11 +330,19 @@ export function createCursorHookAdapter(): GatewayAdapter {
           command: req.body?.command,
           permission: req.body?.permission,
           requiresApproval: req.body?.requiresApproval,
-          agentMarker: req.body?.agent_marker,
           ip: req.ip || req.socket.remoteAddress,
         });
         if (!validateHookSourceIp(req, context.config.allowedHookIps)) {
           forbidden(res);
+          return;
+        }
+        const clientHint = resolveAgentwakeClientHint(req.body);
+        if (clientHint === "qoder" && context.config.qoderAdapterEnabled === false) {
+          logger.info("cursor hook ignored: qoder forwarded event while qoder adapter disabled", {
+            event: req.body?.hook_event_name,
+            command: req.body?.command,
+          });
+          res.status(202).json({ ok: true, accepted: false, reason: "qoder-adapter-disabled" });
           return;
         }
 
@@ -328,10 +351,9 @@ export function createCursorHookAdapter(): GatewayAdapter {
           const key = resolveCursorSignalKey(signal);
           if (signal.hookEvent === "beforeShellExecution") {
             await refreshCursorCommandMemory("before-shell-realtime");
-            const signalEditor = signal.agentMarker === "qoder" ? "qoder" : "cursor";
             if (signal.explicitApproval) {
               recordExplicitApprovalRequest(key);
-              if (!isEditorEventEnabled(signalEditor, "Notification")) {
+              if (!isCursorEventEnabled("Notification")) {
                 accept(res);
                 return;
               }
@@ -356,11 +378,10 @@ export function createCursorHookAdapter(): GatewayAdapter {
               hookEvent: signal.hookEvent,
               sandbox: signal.sandbox,
               explicitApproval: signal.explicitApproval,
-              agentMarker: signal.agentMarker,
             });
             const runMode = resolveCursorAgentRunMode(cursorAutoRunState);
             if (runMode === "ask-every-time") {
-              if (!isEditorEventEnabled(signalEditor, "Notification")) {
+              if (!isCursorEventEnabled("Notification")) {
                 accept(res);
                 return;
               }
@@ -453,20 +474,17 @@ export function createCursorHookAdapter(): GatewayAdapter {
             key,
             durationMs: signal.durationMs,
             exitCode: signal.exitCode,
-            agentMarker: signal.agentMarker,
           });
           const events = createCursorLifecycleEvents({ signal });
           for (const event of events) {
             const eventName = String(event.meta?.eventName ?? "");
-            const editor = event.editor === "qoder" ? "qoder" : "cursor";
-            if (isEditorEventEnabled(editor, eventName)) {
+            if (isCursorEventEnabled(eventName)) {
               emitInBackground(event);
             }
           }
           logger.info("cursor hook accepted", {
             reason: "lifecycle-after-shell",
             exitCode: signal.exitCode,
-            agentMarker: signal.agentMarker,
             emitted: events.map((event) => ({
               dedupeKey: event.dedupeKey,
               title: event.title,
@@ -490,8 +508,7 @@ export function createCursorHookAdapter(): GatewayAdapter {
           return;
         }
         const eventName = String(event.meta?.eventName ?? "");
-        const editor = event.editor === "qoder" ? "qoder" : "cursor";
-        if (!isEditorEventEnabled(editor, eventName)) {
+        if (!isCursorEventEnabled(eventName)) {
           res.status(202).json({ ok: true, accepted: false, reason: "event-disabled" });
           return;
         }

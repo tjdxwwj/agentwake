@@ -6,7 +6,7 @@ import { homePath } from "./paths";
 // Load .env from ~/.agentwake/.env (or cwd/.env as fallback for local dev)
 const homeEnv = homePath(".env");
 if (existsSync(homeEnv)) {
-  dotenv.config({ path: homeEnv });
+  dotenv.config({ path: homeEnv, override: true });
 } else {
   dotenv.config();
 }
@@ -44,6 +44,11 @@ function printAccessQr(host: string, port: number, httpsEnabled: boolean): void 
 
 export async function runGateway(): Promise<void> {
   const config = loadConfig();
+  // 直接打到 stdout，避免用户未设置 LOG_LEVEL 时看不到通知渠道状态
+  const desktopOn = config.desktopEnabled;
+  console.log(
+    `[agentwake] 桌面系统通知: ${desktopOn ? "开启" : "关闭（AGENTWAKE_DESKTOP_ENABLED=0 则不会弹横幅）"}`,
+  );
   const gateway = createGateway(config);
   await gateway.start();
 
@@ -56,8 +61,15 @@ export async function runGateway(): Promise<void> {
         cursorHookPath: config.cursorHookPath,
         claudeHookPath: config.claudeHookPath,
         wsPath: config.wsPath,
+        adapters: {
+          cursor: config.cursorAdapterEnabled,
+          claude: config.claudeAdapterEnabled,
+          qoder: config.qoderAdapterEnabled,
+        },
       });
-      printAccessQr(config.host, config.port, config.httpsEnabled);
+      if (config.pwaEnabled) {
+        printAccessQr(config.host, config.port, config.httpsEnabled);
+      }
       resolve();
     });
     gateway.server.on("error", reject);

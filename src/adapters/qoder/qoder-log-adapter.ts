@@ -2,9 +2,9 @@ import { createReadStream, existsSync, readdirSync, readFileSync, statSync, type
 import os from "node:os";
 import path from "node:path";
 import { createInterface } from "node:readline";
-import { createNotifyEvent, type NotifyEvent } from "../domain/notify-event";
-import type { AdapterStop, GatewayAdapter } from "../gateway/adapter";
-import { logger } from "../utils/logger";
+import { createNotifyEvent } from "../../domain/notify-event";
+import type { AdapterStop, GatewayAdapter } from "../../gateway/adapter";
+import { logger } from "../../utils/logger";
 
 export type QoderLogSignal =
   | {
@@ -16,6 +16,7 @@ export type QoderLogSignal =
   | {
       type: "command_completed";
       command: string | undefined;
+      toolCallId?: string;
       exitCode: number;
       logTimestampSec: number | undefined;
     }
@@ -28,6 +29,12 @@ export type QoderLogSignal =
       type: "agent_session_end";
       logTimestampSec: number | undefined;
       sessionId: string | undefined;
+    }
+  | {
+      type: "approval_requested";
+      logTimestampSec: number | undefined;
+      toolCallId?: string;
+      toolName?: string;
     };
 
 type FileCursor = {
@@ -40,14 +47,7 @@ type PendingCommandProbe = {
   notifyTimer: ReturnType<typeof setTimeout>;
 };
 
-type QoderTerminalRunMode =
-  | "ask-every-time"
-  | "allowlist-auto-run"
-  | "full-auto-run"
-  | "unknown";
-
 export type QoderRunConfig = {
-  terminalRunMode: string;
   commandAllowlist: string[];
   commandDenylist: string[];
   loadedAtMs: number;
@@ -102,10 +102,19 @@ function extractToolCallId(line: string): string | undefined {
   return match?.[1]?.trim() || undefined;
 }
 
+function extractToolName(line: string): string | undefined {
+  const match = line.match(/toolName[=:]["']?([^,"'\s}]+)/i);
+  return match?.[1]?.trim() || undefined;
+}
+
 function extractStartedCommand(line: string): string | undefined {
   const byQuotedCommand = line.match(/command="([^"]+)"/i);
   if (byQuotedCommand?.[1]) {
     return byQuotedCommand[1].trim();
+  }
+  const byRunning = line.match(/Running command:\s*(.+)$/i);
+  if (byRunning?.[1]?.trim()) {
+    return byRunning[1].trim();
   }
   const byExecution = line.match(/Starting command execution:\s*(.+)$/i);
   const fallback = byExecution?.[1]?.trim();
@@ -142,7 +151,6 @@ function splitCommaList(raw: unknown): string[] {
 
 function createDefaultQoderRunConfig(): QoderRunConfig {
   return {
-    terminalRunMode: "unknown",
     commandAllowlist: [],
     commandDenylist: [],
     loadedAtMs: 0,
@@ -154,7 +162,6 @@ export function parseQoderRunConfigFromSettings(rawJson: string): QoderRunConfig
   try {
     const parsed = JSON.parse(rawJson) as {
       app?: {
-        configChatTerminalRunMode?: unknown;
         configChatCommandAllowlist?: unknown;
         configChatCommandDenyList?: unknown;
       };
@@ -164,10 +171,6 @@ export function parseQoderRunConfigFromSettings(rawJson: string): QoderRunConfig
       return fallback;
     }
     return {
-      terminalRunMode:
-        typeof app.configChatTerminalRunMode === "string" && app.configChatTerminalRunMode.trim().length > 0
-          ? app.configChatTerminalRunMode.trim()
-          : "unknown",
       commandAllowlist: splitCommaList(app.configChatCommandAllowlist),
       commandDenylist: splitCommaList(app.configChatCommandDenyList),
       loadedAtMs: Date.now(),
@@ -193,20 +196,6 @@ export function loadQoderRunConfig(settingsPath = QODER_USER_SETTINGS_PATH): Qod
   }
 }
 
-function resolveQoderTerminalRunMode(runMode: string): QoderTerminalRunMode {
-  const normalized = runMode.trim().toLowerCase().replace(/[\s_-]+/g, "");
-  if (normalized === "askeverytime") {
-    return "ask-every-time";
-  }
-  if (normalized === "autorun") {
-    return "allowlist-auto-run";
-  }
-  if (normalized === "runeverything" || normalized === "fullautorun") {
-    return "full-auto-run";
-  }
-  return "unknown";
-}
-
 function normalizeCommand(input: string): string {
   return input.trim().toLowerCase().replace(/\s+/g, " ");
 }
@@ -227,15 +216,48 @@ function commandMatchesRule(command: string, rule: string): boolean {
   );
 }
 
-function isCommandInQoderAllowlist(command: string, allowlist: string[], denylist: string[]): boolean {
+/** True if command matches any entry in the list (same matching rules as Qoder UI). */
+export function commandMatchesRuleList(command: string, rules: string[]): boolean {
   const normalizedCommand = normalizeCommand(command);
   if (!normalizedCommand) {
     return false;
   }
-  if (denylist.some((rule) => commandMatchesRule(normalizedCommand, rule))) {
-    return false;
+  return rules.some((rule) => commandMatchesRule(normalizedCommand, rule));
+}
+
+/**
+ * Pending 通知与完成事件对齐用的 key：优先 toolCallId（日志里常见），否则退回整段 command。
+ * 完成日志若只带其一，clearPendingProbesForCompletion 会两种 key 都尝试清理。
+ */
+export function qoderLogPendingProbeKey(command: string, toolCallId: string | undefined): string {
+  const id = toolCallId?.trim();
+  if (id) {
+    return `tc:${id}`;
   }
-  return allowlist.some((rule) => commandMatchesRule(normalizedCommand, rule));
+  return command.trim();
+}
+
+/** Completion 去重 key：优先 toolCallId，其次 command，最后使用时间+exitCode 兜底。 */
+export function qoderCompletionDedupeKeys(
+  signal: Extract<QoderLogSignal, { type: "command_completed" }>,
+  nowMs = Date.now(),
+): string[] {
+  const keys: string[] = [];
+  const exitPart = String(signal.exitCode);
+  const toolCallId = signal.toolCallId?.trim();
+  if (toolCallId) {
+    keys.push(`tc:${toolCallId}:${exitPart}`);
+  }
+  const command = signal.command?.trim();
+  if (command) {
+    keys.push(`cmd:${normalizeCommand(command)}:${exitPart}`);
+  }
+  const timePart =
+    typeof signal.logTimestampSec === "number" && Number.isFinite(signal.logTimestampSec)
+      ? String(signal.logTimestampSec)
+      : String(Math.floor(nowMs / 1000));
+  keys.push(`sec:${timePart}:exit:${exitPart}`);
+  return keys;
 }
 
 function findLatestQoderSessionDir(baseDir: string): string | undefined {
@@ -365,16 +387,29 @@ export function parseQoderLogLine(line: string): QoderLogSignal | null {
     };
   }
 
+  if (/Tool permission requested/i.test(text)) {
+    const toolCallId = extractToolCallId(text);
+    const toolName = extractToolName(text);
+    return {
+      type: "approval_requested",
+      logTimestampSec: extractLogTimestampSec(text),
+      ...(toolCallId ? { toolCallId } : {}),
+      ...(toolName ? { toolName } : {}),
+    };
+  }
+
   if (/Command finished via end event|Command execution completed|Command completed|Temporary command completed/i.test(text)) {
     const exitCode = extractExitCode(text);
     if (typeof exitCode !== "number") {
       return null;
     }
+    const toolCallIdDone = extractToolCallId(text);
     return {
       type: "command_completed",
       command: extractCompletedCommand(text),
       exitCode,
       logTimestampSec: extractLogTimestampSec(text),
+      ...(toolCallIdDone ? { toolCallId: toolCallIdDone } : {}),
     };
   }
 
@@ -405,10 +440,15 @@ export function createQoderLogAdapter(): GatewayAdapter {
   return {
     id: "qoder-log-adapter",
     async start(context) {
+      if (context.config.qoderAdapterEnabled === false) {
+        logger.info("qoder log adapter disabled by config");
+        return () => {};
+      }
       const enabledEvents = new Set(context.config.qoderEnabledEvents);
       const isQoderEventEnabled = (eventName: string): boolean => enabledEvents.has(eventName);
       const recentCompletionKeys = new Map<string, number>();
       const pendingCommandProbes = new Map<string, PendingCommandProbe>();
+      const startedCommandsByToolCallId = new Map<string, string>();
       const cursors = new Map<string, FileCursor>();
       let filePollTimer: ReturnType<typeof setInterval> | undefined;
       let discoveryPollTimer: ReturnType<typeof setInterval> | undefined;
@@ -419,7 +459,6 @@ export function createQoderLogAdapter(): GatewayAdapter {
         qoderRunConfig = loadQoderRunConfig();
         logger.info("qoder run config refreshed", {
           reason,
-          terminalRunMode: qoderRunConfig.terminalRunMode,
           allowlistCount: qoderRunConfig.commandAllowlist.length,
           denylistCount: qoderRunConfig.commandDenylist.length,
           sourcePath: qoderRunConfig.sourcePath,
@@ -437,7 +476,7 @@ export function createQoderLogAdapter(): GatewayAdapter {
           return;
         }
         const stopTitle = stopEventName === "Stop" ? "Qoder: 任务完成" : "Qoder: 任务异常终止";
-        const stopBody = `${params.subject} 执行结束（退出码 ${params.exitCode ?? 1}）`;
+        const stopBody = `${params.subject} 执行结束（退出码 ${params.exitCode ?? 1}）\n来源: qoder-log`;
         await context.emit(
           createNotifyEvent({
             source: "qoder-log",
@@ -465,6 +504,47 @@ export function createQoderLogAdapter(): GatewayAdapter {
         pendingCommandProbes.delete(key);
       };
 
+      /** 完成行可能只带 command 或只带 toolCallId，与开始行对齐时两种 key 都尝试取消延迟提醒。 */
+      const clearPendingProbesForCompletion = (signal: {
+        command?: string | undefined;
+        toolCallId?: string | undefined;
+      }): void => {
+        const id = signal.toolCallId?.trim();
+        const cmd = signal.command?.trim();
+        if (id) {
+          cleanupPendingCommandProbe(`tc:${id}`);
+        }
+        if (cmd) {
+          cleanupPendingCommandProbe(cmd);
+        }
+      };
+
+      const emitQoderApprovalNotification = async (params: {
+        probeKey: string;
+        command: string;
+        reasonLine: string;
+        meta: Record<string, unknown>;
+      }): Promise<void> => {
+        if (!isQoderEventEnabled("Notification")) {
+          return;
+        }
+        await context.emit(
+          createNotifyEvent({
+            source: "qoder-log",
+            editor: "qoder",
+            level: "warn",
+            title: "Qoder 终端等待用户同意",
+            body: `命令: ${params.command}\n${params.reasonLine}\n来源: qoder-log`,
+            dedupeKey: `qoder-log:lifecycle:Notification:${params.probeKey}`,
+            meta: {
+              eventName: "Notification",
+              command: params.command,
+              ...params.meta,
+            },
+          }),
+        );
+      };
+
       const schedulePendingCommandProbe = (params: { key: string; command: string }): void => {
         cleanupPendingCommandProbe(params.key);
         const startedAtMs = Date.now();
@@ -484,12 +564,12 @@ export function createQoderLogAdapter(): GatewayAdapter {
               editor: "qoder",
               level: "warn",
               title: "Qoder 终端等待用户同意",
-              body: `命令: ${pending.command}\n原因: allowlist-miss-and-no-after-4s\n等待时长: ${(waitMs / 1000).toFixed(1)}s`,
+              body: `命令: ${pending.command}\n原因: 既未命中 allowlist 也未命中 denylist，4s 内未见结束则提醒\n等待时长: ${(waitMs / 1000).toFixed(1)}s\n来源: qoder-log`,
               dedupeKey: `qoder-log:lifecycle:Notification:${params.key}`,
               meta: {
                 eventName: "Notification",
                 command: pending.command,
-                reason: "allowlist-miss-and-no-after-4s",
+                reason: "not-in-allowlist-or-denylist-after-4s",
                 waitMs,
               },
             }),
@@ -517,7 +597,7 @@ export function createQoderLogAdapter(): GatewayAdapter {
             editor: "qoder",
             level: "info",
             title: "Qoder: 会话已开始",
-            body: params.subject ? `${params.subject} 会话已开始` : "Qoder 会话已开始",
+            body: params.subject ? `${params.subject} 会话已开始\n来源: qoder-log` : "Qoder 会话已开始\n来源: qoder-log",
             dedupeKey: `qoder-log:lifecycle:SessionStart:${params.dedupeToken}`,
             meta: {
               eventName: "SessionStart",
@@ -540,7 +620,7 @@ export function createQoderLogAdapter(): GatewayAdapter {
             editor: "qoder",
             level: "info",
             title: "Qoder: 会话已结束",
-            body: params.subject ? `${params.subject} 会话已结束` : "Qoder 会话已结束",
+            body: params.subject ? `${params.subject} 会话已结束\n来源: qoder-log` : "Qoder 会话已结束\n来源: qoder-log",
             dedupeKey: `qoder-log:lifecycle:SessionEnd:${params.dedupeToken}`,
             meta: {
               eventName: "SessionEnd",
@@ -553,48 +633,60 @@ export function createQoderLogAdapter(): GatewayAdapter {
       const handleSignal = async (signal: QoderLogSignal): Promise<void> => {
         if (signal.type === "command_started") {
           refreshQoderRunConfig("command-start-realtime");
-          const runMode = resolveQoderTerminalRunMode(qoderRunConfig.terminalRunMode);
-          const probeKey = signal.command.trim();
-
-          if (runMode === "ask-every-time") {
-            if (!isQoderEventEnabled("Notification")) {
-              return;
-            }
-            await context.emit(
-              createNotifyEvent({
-                source: "qoder-log",
-                editor: "qoder",
-                level: "warn",
-                title: "Qoder 终端等待用户同意",
-                body: `命令: ${signal.command}\n原因: ask-every-time-mode`,
-                dedupeKey: `qoder-log:lifecycle:Notification:${probeKey}`,
-                meta: {
-                  eventName: "Notification",
-                  command: signal.command,
-                  reason: "ask-every-time-mode",
-                },
-              }),
-            );
+          const probeKey = qoderLogPendingProbeKey(signal.command, signal.toolCallId);
+          const startedToolCallId = signal.toolCallId?.trim();
+          if (startedToolCallId) {
+            startedCommandsByToolCallId.set(startedToolCallId, signal.command);
+          }
+          if (!probeKey) {
             return;
           }
 
-          if (runMode !== "allowlist-auto-run") {
+          // 1) Denylist hit → immediate notification
+          if (commandMatchesRuleList(signal.command, qoderRunConfig.commandDenylist)) {
+            await emitQoderApprovalNotification({
+              probeKey,
+              command: signal.command,
+              reasonLine: "原因: 命中 denylist",
+              meta: { reason: "denylist-hit" },
+            });
             return;
           }
 
-          if (
-            isCommandInQoderAllowlist(
-              signal.command,
-              qoderRunConfig.commandAllowlist,
-              qoderRunConfig.commandDenylist,
-            )
-          ) {
+          // 2) Allowlist hit → no command_start notification
+          if (commandMatchesRuleList(signal.command, qoderRunConfig.commandAllowlist)) {
             return;
           }
 
+          // 3) Neither list → delayed notification if the command does not complete within 4s
           schedulePendingCommandProbe({
             key: probeKey,
             command: signal.command,
+          });
+          return;
+        }
+
+        if (signal.type === "approval_requested") {
+          const toolCallId = signal.toolCallId?.trim();
+          if (!toolCallId) {
+            return;
+          }
+          const probeKey = `tc:${toolCallId}`;
+          const pending = pendingCommandProbes.get(probeKey);
+          const command =
+            pending?.command ??
+            startedCommandsByToolCallId.get(toolCallId) ??
+            (signal.toolName ? `${signal.toolName} (toolCallId=${toolCallId})` : `toolCallId=${toolCallId}`);
+          cleanupPendingCommandProbe(probeKey);
+          await emitQoderApprovalNotification({
+            probeKey,
+            command,
+            reasonLine: signal.toolName ? `原因: Qoder 请求工具授权（${signal.toolName}）` : "原因: Qoder 请求工具授权",
+            meta: {
+              reason: "permission-requested",
+              toolCallId,
+              toolName: signal.toolName,
+            },
           });
           return;
         }
@@ -629,30 +721,30 @@ export function createQoderLogAdapter(): GatewayAdapter {
           return;
         }
         
+        clearPendingProbesForCompletion(signal);
+        const completedToolCallId = signal.toolCallId?.trim();
+        if (completedToolCallId) {
+          startedCommandsByToolCallId.delete(completedToolCallId);
+        }
+
         const now = Date.now();
         for (const [key, ts] of recentCompletionKeys.entries()) {
           if (now - ts > COMPLETION_DEDUPE_WINDOW_MS) {
             recentCompletionKeys.delete(key);
           }
         }
-        const timePart =
-          typeof signal.logTimestampSec === "number" && Number.isFinite(signal.logTimestampSec)
-            ? String(signal.logTimestampSec)
-            : String(Math.floor(now / 1000));
-        const commandPart = signal.command?.trim() || "unknown-command";
-        const completionKey = `${timePart}:${commandPart}:${signal.exitCode}`;
-        if (recentCompletionKeys.has(completionKey)) {
+        const completionKeys = qoderCompletionDedupeKeys(signal, now);
+        if (completionKeys.some((key) => recentCompletionKeys.has(key))) {
           return;
         }
-        recentCompletionKeys.set(completionKey, now);
-
-        if (signal.command?.trim()) {
-          cleanupPendingCommandProbe(signal.command.trim());
+        for (const key of completionKeys) {
+          recentCompletionKeys.set(key, now);
         }
+        const dedupeToken = completionKeys[0] ?? `sec:${Math.floor(now / 1000)}:exit:${signal.exitCode}`;
 
         const outcome = signal.exitCode === 0 ? "allow" : "reject";
         emitStopLifecycleNotification({
-          dedupeToken: completionKey,
+          dedupeToken,
           subject: signal.command || "terminal 命令",
           outcome,
           exitCode: signal.exitCode,
@@ -748,6 +840,7 @@ export function createQoderLogAdapter(): GatewayAdapter {
           clearTimeout(pending.notifyTimer);
         }
         pendingCommandProbes.clear();
+        startedCommandsByToolCallId.clear();
         recentCompletionKeys.clear();
       };
 

@@ -8,7 +8,8 @@ const LOG_PRIORITY: Record<LogLevel, number> = {
 };
 
 function resolveMinLogLevel(): LogLevel {
-  const raw = (process.env.AGENTWAKE_LOG_LEVEL || "error").trim().toLowerCase();
+  // 默认 info：否则桌面通知成功/去重/限流等全无输出，用户误以为「没有通知」
+  const raw = (process.env.AGENTWAKE_LOG_LEVEL || "info").trim().toLowerCase();
   if (raw === "debug" || raw === "info" || raw === "warn" || raw === "error") {
     return raw;
   }

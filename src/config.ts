@@ -2,6 +2,17 @@ import path from "node:path";
 import webPush from "web-push";
 import { homePath, PKG_ROOT } from "./paths";
 
+/** Cursor 终端转发与 Qoder 日志监听共用的事件名默认集（任务完成 Stop 与异常 StopFailure 均默认开启）。 */
+const DEFAULT_EDITOR_HOOK_EVENTS = [
+  "Notification",
+  "Stop",
+  "StopFailure",
+  "SessionEnd",
+  "SessionStart",
+  "PreToolUse",
+  "PostToolUse",
+] as const;
+
 export type AppConfig = {
   host: string;
   port: number;
@@ -11,6 +22,16 @@ export type AppConfig = {
   cursorHookPath: string;
   claudeHookPath: string;
   qoderLogPath: string | undefined;
+  /** Hook/event names enabled for Cursor terminal forwarder. */
+  cursorEnabledEvents: string[];
+  /** Hook/event names enabled for Qoder log adapter. */
+  qoderEnabledEvents: string[];
+  /** Whether to register Cursor hook adapter. */
+  cursorAdapterEnabled: boolean;
+  /** Whether to register Claude hook adapter. */
+  claudeAdapterEnabled: boolean;
+  /** Whether to register Qoder log adapter. */
+  qoderAdapterEnabled: boolean;
   dedupeWindowMs: number;
   rateLimitWindowMs: number;
   rateLimitMaxEvents: number;
@@ -84,10 +105,13 @@ export function loadConfig(): AppConfig {
     return raw === "1" || raw.toLowerCase() === "true";
   };
   const desktopEnabled = boolEnv("AGENTWAKE_DESKTOP_ENABLED", true);
-  const pwaEnabled = boolEnv("AGENTWAKE_PWA_ENABLED", true);
+  const pwaEnabled = boolEnv("AGENTWAKE_PWA_ENABLED", false);
   const dingtalkEnabled = boolEnv("AGENTWAKE_DINGTALK_ENABLED", true);
   const feishuEnabled = boolEnv("AGENTWAKE_FEISHU_ENABLED", true);
   const wecomEnabled = boolEnv("AGENTWAKE_WECOM_ENABLED", true);
+  const cursorAdapterEnabled = boolEnv("AGENTWAKE_CURSOR_ENABLED", true);
+  const claudeAdapterEnabled = boolEnv("AGENTWAKE_CLAUDE_ENABLED", true);
+  const qoderAdapterEnabled = boolEnv("AGENTWAKE_QODER_ENABLED", true);
 
   const claudeEventTitles: Record<string, string> = {};
   const titlePrefix = "AGENTWAKE_CLAUDE_TITLE_";
@@ -112,6 +136,11 @@ export function loadConfig(): AppConfig {
     cursorHookPath,
     claudeHookPath,
     qoderLogPath,
+    cursorEnabledEvents: [...DEFAULT_EDITOR_HOOK_EVENTS],
+    qoderEnabledEvents: [...DEFAULT_EDITOR_HOOK_EVENTS],
+    cursorAdapterEnabled,
+    claudeAdapterEnabled,
+    qoderAdapterEnabled,
     dedupeWindowMs,
     rateLimitWindowMs,
     rateLimitMaxEvents,
