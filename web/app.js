@@ -217,6 +217,75 @@ async function onRequestPermissionClick() {
   const result = await Notification.requestPermission();
   debugLog("notification permission", { result });
   setStatus(`通知权限：${result}`);
+  if (result === "granted") {
+    await ensurePushSubscription();
+  }
+}
+
+function base64UrlToUint8Array(base64Url) {
+  const padding = "=".repeat((4 - (base64Url.length % 4)) % 4);
+  const base64 = (base64Url + padding).replace(/-/g, "+").replace(/_/g, "/");
+  const raw = atob(base64);
+  const output = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i += 1) {
+    output[i] = raw.charCodeAt(i);
+  }
+  return output;
+}
+
+async function ensurePushSubscription() {
+  if (!swRegistration) {
+    debugLog("push skipped: sw unavailable");
+    return;
+  }
+  if (typeof Notification !== "function" || Notification.permission !== "granted") {
+    debugLog("push skipped: permission not granted", {
+      permission: typeof Notification === "function" ? Notification.permission : "unavailable",
+    });
+    return;
+  }
+  if (!("PushManager" in window)) {
+    debugLog("push skipped: push manager unsupported");
+    return;
+  }
+
+  const keyResp = await fetch("/api/push/public-key", { cache: "no-store" }).catch(() => null);
+  if (!keyResp?.ok) {
+    debugLog("push public key unavailable", { status: keyResp?.status ?? 0 });
+    return;
+  }
+  const keyData = await keyResp.json().catch(() => null);
+  const publicKey = typeof keyData?.publicKey === "string" ? keyData.publicKey : "";
+  if (!publicKey) {
+    debugLog("push public key empty");
+    return;
+  }
+
+  let subscription = await swRegistration.pushManager.getSubscription();
+  if (!subscription) {
+    try {
+      subscription = await swRegistration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: base64UrlToUint8Array(publicKey),
+      });
+      debugLog("push subscribed", { endpoint: subscription.endpoint });
+    } catch (error) {
+      debugLog("push subscribe failed", { error: String(error) });
+      return;
+    }
+  }
+
+  const resp = await fetch("/api/push/subscribe", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ subscription }),
+  }).catch(() => null);
+  if (!resp?.ok) {
+    debugLog("push subscribe upload failed", { status: resp?.status ?? 0 });
+    return;
+  }
+
+  debugLog("push subscription synced", { endpoint: subscription.endpoint });
 }
 
 async function setupServiceWorker() {
@@ -327,7 +396,10 @@ async function init() {
     wsPath = runtime.wsPath;
     debugLog("wsPath updated", { wsPath });
   }
-  void setupServiceWorker();
+  await setupServiceWorker();
+  if (Notification.permission === "granted") {
+    await ensurePushSubscription();
+  }
   void connectWs();
   setInterval(() => {
     void pollEvents();
@@ -335,6 +407,7 @@ async function init() {
   void pollEvents();
   debugLog("init done");
 }
+
 
 window.addEventListener("error", (event) => {
   debugLog("window error", { message: event.message, filename: event.filename, lineno: event.lineno });

@@ -15,6 +15,7 @@ import { DesktopNotifier } from "./notifiers/desktop-notifier";
 import { DingTalkNotifier } from "./notifiers/dingtalk-notifier";
 import { FeishuNotifier } from "./notifiers/feishu-notifier";
 import { MobileWsNotifier } from "./notifiers/mobile-ws-notifier";
+import { PwaPushNotifier } from "./notifiers/pwa-push-notifier";
 import { WeComNotifier } from "./notifiers/wecom-notifier";
 import type { Notifier } from "./notifiers/notifier";
 
@@ -49,6 +50,7 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
   app.use(express.urlencoded({ extended: false }));
 
   const mobileWsNotifier = new MobileWsNotifier();
+  const pwaPushNotifier = new PwaPushNotifier(config.vapidPublicKey);
   const desktopNotifier = new DesktopNotifier();
   const defaultNotifiers: Notifier[] = [];
   if (config.desktopEnabled) {
@@ -56,6 +58,9 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
   }
   if (config.pwaEnabled) {
     defaultNotifiers.push(mobileWsNotifier);
+    if (config.vapidPublicKey && config.vapidPrivateKey) {
+      defaultNotifiers.push(pwaPushNotifier);
+    }
   }
   if (config.dingtalkEnabled && config.dingtalkWebhook) {
     defaultNotifiers.push(
@@ -118,6 +123,10 @@ export function createGateway(config: AppConfig, overrides?: GatewayOverrides): 
       .sort((a, b) => a.timestamp - b.timestamp);
     res.json({ ok: true, events, now: Date.now() });
   });
+
+  if (config.pwaEnabled) {
+    pwaPushNotifier.mountRoutes(app);
+  }
 
   /** 仅本机：走与 Hook 相同的路由，用于区分「网关/桌面」与「Hook 未触发」 */
   app.post("/api/debug/desktop-notify-test", (req, res) => {
